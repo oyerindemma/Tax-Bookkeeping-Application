@@ -32,6 +32,10 @@ function inferDatabaseProviderFromUrl(databaseUrl: string): DatabaseProvider | n
   return null;
 }
 
+function isVercelEnvironment() {
+  return Boolean(readEnv("VERCEL") || readEnv("VERCEL_ENV") || readEnv("VERCEL_URL"));
+}
+
 export function getDatabaseProvider(): DatabaseProvider {
   const explicit = readEnv("DATABASE_PROVIDER").toLowerCase();
   if (explicit) {
@@ -41,7 +45,7 @@ export function getDatabaseProvider(): DatabaseProvider {
     throw new Error("DATABASE_PROVIDER must be sqlite or postgresql");
   }
 
-  return inferDatabaseProviderFromUrl(readEnv("DATABASE_URL")) ?? "sqlite";
+  return inferDatabaseProviderFromUrl(readEnv("DATABASE_URL")) ?? (isVercelEnvironment() ? "postgresql" : "sqlite");
 }
 
 export function validateDatabaseEnvironment() {
