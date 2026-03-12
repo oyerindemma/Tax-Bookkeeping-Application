@@ -1,0 +1,186 @@
+import "server-only";
+
+import type { Prisma, SubscriptionPlan } from "@prisma/client";
+import { cookies } from "next/headers";
+import { formatSubscriptionStatus } from "@/src/lib/billing";
+import { prisma } from "@/src/lib/prisma";
+import { SESSION_MAX_AGE_SECONDS } from "@/src/lib/session-constants";
+
+export const WORKSPACE_COOKIE_NAME = "tb_workspace";
+
+export function buildWorkspaceCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  };
+}
+
+export type WorkspaceRole = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+
+export function canManageWorkspace(role: WorkspaceRole) {
+  return role === "OWNER" || role === "ADMIN";
+}
+
+type WorkspaceMembershipWithDetails = Prisma.WorkspaceMemberGetPayload<{
+  include: {
+    workspace: {
+      include: {
+        subscription: true;
+        _count: {
+          select: {
+            members: true;
+            invoices: true;
+            taxRecords: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
+export type UserWorkspaceSummary = {
+  id: number;
+  name: string;
+  role: WorkspaceRole;
+  archivedAt: Date | null;
+  createdAt: Date;
+  membersCount: number;
+  invoicesCount: number;
+  taxRecordsCount: number;
+  plan: SubscriptionPlan | null;
+  subscriptionLabel: string;
+};
+
+function mapWorkspaceSummary(membership: WorkspaceMembershipWithDetails): UserWorkspaceSummary {
+  return {
+    id: membership.workspaceId,
+    name: membership.workspace.name,
+    role: membership.role,
+    archivedAt: membership.workspace.archivedAt,
+    createdAt: membership.workspace.createdAt,
+    membersCount: membership.workspace._count.members,
+    invoicesCount: membership.workspace._count.invoices,
+    taxRecordsCount: membership.workspace._count.taxRecords,
+    plan: membership.workspace.subscription?.plan ?? null,
+    subscriptionLabel: formatSubscriptionStatus(membership.workspace.subscription),
+  };
+}
+
+export async function listWorkspaceMemberships(userId: number) {
+  return prisma.workspaceMember.findMany({
+    where: {
+      userId,
+      workspace: {
+        archivedAt: null,
+      },
+    },
+    include: { workspace: true },
+    orderBy: { workspace: { name: "asc" } },
+  });
+}
+
+export async function listUserWorkspaceSummaries(userId: number) {
+  const memberships = await prisma.workspaceMember.findMany({
+    where: { userId },
+    include: {
+      workspace: {
+        include: {
+          subscription: true,
+          _count: {
+            select: {
+              members: true,
+              invoices: true,
+              taxRecords: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { workspace: { name: "asc" } },
+  });
+
+  return memberships
+    .map((membership) => mapWorkspaceSummary(membership))
+    .sort((left, right) => {
+      if (Boolean(left.archivedAt) !== Boolean(right.archivedAt)) {
+        return left.archivedAt ? 1 : -1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+}
+
+export async function getUserWorkspaceSummary(userId: number, workspaceId: number) {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: { userId, workspaceId },
+    include: {
+      workspace: {
+        include: {
+          subscription: true,
+          _count: {
+            select: {
+              members: true,
+              invoices: true,
+              taxRecords: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!membership) return null;
+  return mapWorkspaceSummary(membership);
+}
+
+export async function findFallbackWorkspaceId(
+  userId: number,
+  excludedWorkspaceId?: number
+) {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: {
+      userId,
+      workspaceId: excludedWorkspaceId ? { not: excludedWorkspaceId } : undefined,
+      workspace: {
+        archivedAt: null,
+      },
+    },
+    orderBy: { workspace: { name: "asc" } },
+    select: { workspaceId: true },
+  });
+
+  return membership?.workspaceId ?? null;
+}
+
+export async function getActiveWorkspaceMembership(userId: number) {
+  const cookieStore = await cookies();
+  const raw = cookieStore.get(WORKSPACE_COOKIE_NAME)?.value;
+  const workspaceId = raw ? Number(raw) : NaN;
+
+  if (Number.isFinite(workspaceId) && Number.isInteger(workspaceId)) {
+    const membership = await prisma.workspaceMember.findFirst({
+      where: {
+        userId,
+        workspaceId,
+        workspace: {
+          archivedAt: null,
+        },
+      },
+      include: { workspace: true },
+    });
+    if (membership) return membership;
+  }
+
+  return prisma.workspaceMember.findFirst({
+    where: {
+      userId,
+      workspace: {
+        archivedAt: null,
+      },
+    },
+    include: { workspace: true },
+    orderBy: { workspace: { name: "asc" } },
+  });
+}

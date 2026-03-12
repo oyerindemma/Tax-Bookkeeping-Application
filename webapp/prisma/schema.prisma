@@ -1,0 +1,357 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  fullName  String
+  role      String   @default("USER")
+  createdAt DateTime @default(now())
+  sessions  Session[]
+  workspaces WorkspaceMember[]
+  taxRecords TaxRecord[]
+  auditLogs AuditLog[] @relation("AuditActor")
+  auditTargets AuditLog[] @relation("AuditTarget")
+}
+
+model Workspace {
+  id        Int               @id @default(autoincrement())
+  name      String
+  createdAt DateTime          @default(now())
+  archivedAt DateTime?
+  members   WorkspaceMember[]
+  taxRecords TaxRecord[]
+  invites   Invite[]
+  auditLogs AuditLog[]
+  subscription WorkspaceSubscription?
+  clients   Client[]
+  invoices  Invoice[]
+  recurringInvoices RecurringInvoice[]
+  bankAccounts BankAccount[]
+  bankTransactions BankTransaction[]
+  reconciliationMatches ReconciliationMatch[]
+  expenseCategories ExpenseCategory[]
+
+  @@index([archivedAt])
+}
+
+model WorkspaceMember {
+  id          Int           @id @default(autoincrement())
+  workspaceId Int
+  userId      Int
+  role        WorkspaceRole @default(VIEWER)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum SubscriptionPlan {
+  FREE
+  GROWTH
+  BUSINESS
+  ACCOUNTANT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+}
+
+enum RecurringInvoiceFrequency {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+}
+
+enum BankTransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum BankTransactionStatus {
+  UNMATCHED
+  MATCHED
+  IGNORED
+}
+
+enum ReconciliationMatchType {
+  INVOICE
+  TAX_RECORD
+  MANUAL
+}
+
+model Client {
+  id          Int      @id @default(autoincrement())
+  workspaceId Int
+  name        String
+  companyName String?
+  email       String
+  phone       String?
+  address     String?
+  taxId       String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invoices   Invoice[]
+  recurringInvoices RecurringInvoice[]
+
+  @@index([workspaceId, name])
+  @@index([workspaceId, companyName])
+  @@index([workspaceId, email])
+  @@index([workspaceId, taxId])
+}
+
+model Invoice {
+  id            Int           @id @default(autoincrement())
+  workspaceId   Int
+  clientId      Int
+  recurringInvoiceId Int?
+  invoiceNumber String
+  status        InvoiceStatus @default(DRAFT)
+  paymentReference String?    @unique
+  paymentUrl    String?
+  paidAt        DateTime?
+  issueDate     DateTime
+  dueDate       DateTime
+  subtotal      Int
+  taxAmount     Int
+  totalAmount   Int
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  recurringInvoice RecurringInvoice? @relation(fields: [recurringInvoiceId], references: [id], onDelete: SetNull)
+  items     InvoiceItem[]
+  taxRecord TaxRecord?
+  reconciliationMatches ReconciliationMatch[]
+
+  @@unique([workspaceId, invoiceNumber])
+  @@index([workspaceId, createdAt])
+  @@index([clientId])
+  @@index([recurringInvoiceId])
+  @@index([workspaceId, paymentReference])
+}
+
+model InvoiceItem {
+  id          Int     @id @default(autoincrement())
+  invoiceId   Int
+  description String
+  quantity    Int
+  unitPrice   Int
+  taxRate     Float   @default(0)
+  lineTotal   Int
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model RecurringInvoice {
+  id            Int                       @id @default(autoincrement())
+  workspaceId   Int
+  clientId      Int
+  frequency     RecurringInvoiceFrequency
+  nextRunAt     DateTime
+  dueInDays     Int                       @default(0)
+  invoiceStatus InvoiceStatus             @default(DRAFT)
+  active        Boolean                   @default(true)
+  itemsJson     String
+  notes         String?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  generatedInvoices Invoice[]
+
+  @@index([workspaceId, active, nextRunAt])
+  @@index([clientId])
+}
+
+model WorkspaceSubscription {
+  id                       Int              @id @default(autoincrement())
+  workspaceId              Int              @unique
+  plan                     SubscriptionPlan @default(FREE)
+  status                   String?
+  paystackCustomerCode     String?
+  paystackSubscriptionCode String?
+  paystackSubscriptionToken String?
+  paystackPlanCode         String?
+  paystackReference        String?
+  currentPeriodEnd         DateTime?
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([paystackCustomerCode])
+  @@index([paystackSubscriptionCode])
+  @@index([paystackReference])
+}
+
+model Invite {
+  id         Int           @id @default(autoincrement())
+  workspaceId Int
+  email      String
+  role       WorkspaceRole @default(VIEWER)
+  token      String        @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, email])
+  @@index([workspaceId, expiresAt])
+}
+
+model AuditLog {
+  id           Int      @id @default(autoincrement())
+  workspaceId  Int
+  actorUserId  Int?
+  targetUserId Int?
+  action       String
+  metadata     String?
+  createdAt    DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  target    User?     @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([actorUserId])
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  tokenHash String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model TaxRecord {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId Int?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invoiceId   Int?
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  categoryId  Int?
+  category    ExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  kind        String
+  amountKobo  Int
+  taxRate     Float    @default(0)
+  computedTax Int      @default(0)
+  netAmount   Int      @default(0)
+  currency    String   @default("NGN")
+  occurredOn  DateTime
+  description String?
+  source      String?
+  vendorName  String?
+  recurring   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  reconciliationMatches ReconciliationMatch[]
+
+  @@index([userId, occurredOn])
+  @@index([workspaceId, occurredOn])
+  @@index([categoryId])
+  @@unique([invoiceId])
+}
+
+model ExpenseCategory {
+  id          Int      @id @default(autoincrement())
+  workspaceId Int
+  name        String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  taxRecords TaxRecord[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, name])
+}
+
+model BankAccount {
+  id            Int      @id @default(autoincrement())
+  workspaceId   Int
+  name          String
+  bankName      String
+  accountNumber String
+  currency      String   @default("NGN")
+  createdAt     DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([workspaceId, name])
+}
+
+model BankTransaction {
+  id              Int                   @id @default(autoincrement())
+  workspaceId     Int
+  bankAccountId   Int
+  transactionDate DateTime
+  description     String
+  reference       String?
+  amount          Int
+  type            BankTransactionType
+  status          BankTransactionStatus @default(UNMATCHED)
+  createdAt       DateTime              @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  match       ReconciliationMatch?
+
+  @@index([workspaceId, transactionDate])
+  @@index([bankAccountId, transactionDate])
+}
+
+model ReconciliationMatch {
+  id                Int                     @id @default(autoincrement())
+  workspaceId       Int
+  bankTransactionId Int
+  invoiceId         Int?
+  taxRecordId       Int?
+  matchType         ReconciliationMatchType
+  createdAt         DateTime                @default(now())
+
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  taxRecord       TaxRecord? @relation(fields: [taxRecordId], references: [id], onDelete: SetNull)
+
+  @@unique([bankTransactionId])
+  @@index([workspaceId, createdAt])
+}
