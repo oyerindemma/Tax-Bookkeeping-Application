@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/src/lib/prisma";
+import { logAudit } from "@/src/lib/audit";
 import { getSessionFromCookies, getWorkspaceAuth } from "@/src/lib/auth";
+import { getPaymentRuntimeConfig } from "@/src/lib/env";
 import { logRouteError } from "@/src/lib/logger";
 import { verifyPaystackTransaction } from "@/src/lib/paystack";
 import {
   parseBillingMetadata,
+  parseSubscriptionCheckoutReference,
+  syncWorkspaceSubscriptionFromLocalTestReference,
   syncWorkspaceSubscriptionFromPaystackTransaction,
 } from "@/src/lib/paystack-billing";
 
@@ -15,6 +20,10 @@ function buildRedirect(requestUrl: string, query: string) {
   return url;
 }
 
+function parseString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 export async function GET(req: Request) {
   const session = await getSessionFromCookies();
   if (!session) {
@@ -23,23 +32,80 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const reference = url.searchParams.get("reference")?.trim();
+  const stubRequested = url.searchParams.get("stub") === "1";
 
   if (!reference) {
     return NextResponse.redirect(buildRedirect(req.url, "?error=missing_reference"));
   }
 
   try {
+    if (stubRequested) {
+      if (!getPaymentRuntimeConfig().allowStubPayments) {
+        return NextResponse.redirect(buildRedirect(req.url, "?error=stub_checkout_disabled"));
+      }
+
+      const parsedReference = parseSubscriptionCheckoutReference(reference);
+      if (!parsedReference?.isStub) {
+        return NextResponse.redirect(buildRedirect(req.url, "?error=invalid_stub_reference"));
+      }
+
+      const auth = await getWorkspaceAuth(parsedReference.workspaceId, session.userId);
+      if (!auth) {
+        return NextResponse.redirect(buildRedirect(req.url, "?error=workspace_access"));
+      }
+
+      const synced = await syncWorkspaceSubscriptionFromLocalTestReference(reference);
+      if (!synced) {
+        return NextResponse.redirect(buildRedirect(req.url, "?error=workspace_lookup"));
+      }
+
+      await logAudit({
+        workspaceId: parsedReference.workspaceId,
+        actorUserId: session.userId,
+        action: "SUBSCRIPTION_LOCAL_TEST_COMPLETED",
+        metadata: {
+          reference,
+          plan: parsedReference.plan,
+          interval: parsedReference.interval,
+        },
+      });
+
+      return NextResponse.redirect(buildRedirect(req.url, "?success=1"));
+    }
+
     const transaction = await verifyPaystackTransaction(reference);
     if (String(transaction.status).toLowerCase() !== "success") {
       return NextResponse.redirect(buildRedirect(req.url, "?canceled=1"));
     }
 
     const metadata = parseBillingMetadata(transaction.metadata);
-    if (metadata.workspaceId) {
-      const auth = await getWorkspaceAuth(metadata.workspaceId, session.userId);
+    let authorizedWorkspaceId = metadata.workspaceId ?? null;
+    if (!authorizedWorkspaceId) {
+      const currentWorkspaceSubscription = await prisma.workspaceSubscription.findFirst({
+        where: {
+          OR: [
+            { paystackReference: reference },
+            {
+              paystackCustomerCode: parseString(transaction.customer?.customer_code) ?? undefined,
+            },
+            {
+              paystackSubscriptionCode:
+                parseString(transaction.subscription?.subscription_code) ?? undefined,
+            },
+          ],
+        },
+        select: { workspaceId: true },
+      });
+      authorizedWorkspaceId = currentWorkspaceSubscription?.workspaceId ?? null;
+    }
+
+    if (authorizedWorkspaceId) {
+      const auth = await getWorkspaceAuth(authorizedWorkspaceId, session.userId);
       if (!auth) {
         return NextResponse.redirect(buildRedirect(req.url, "?error=workspace_access"));
       }
+    } else {
+      return NextResponse.redirect(buildRedirect(req.url, "?error=workspace_lookup"));
     }
 
     const synced = await syncWorkspaceSubscriptionFromPaystackTransaction(
@@ -49,6 +115,21 @@ export async function GET(req: Request) {
     if (!synced) {
       return NextResponse.redirect(buildRedirect(req.url, "?error=workspace_lookup"));
     }
+    if (authorizedWorkspaceId && synced.workspaceId !== authorizedWorkspaceId) {
+      return NextResponse.redirect(buildRedirect(req.url, "?error=workspace_access"));
+    }
+
+    await logAudit({
+      workspaceId: synced.workspaceId,
+      actorUserId: session.userId,
+      action: "SUBSCRIPTION_VERIFIED",
+      metadata: {
+        reference,
+        plan: synced.plan,
+        interval: synced.billingInterval,
+        status: synced.status,
+      },
+    });
 
     return NextResponse.redirect(buildRedirect(req.url, "?success=1"));
   } catch (error) {

@@ -1,28 +1,106 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/src/lib/prisma";
 import { getAuthContext, requireRoleAtLeast } from "@/src/lib/auth";
 import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import { logAudit } from "@/src/lib/audit";
 import { logRouteError } from "@/src/lib/logger";
+import {
+  BANK_TRANSACTION_STATUSES,
+  createManualLedgerMatch,
+  getWorkspaceBankingDashboard,
+  ignoreBankTransaction,
+  splitBankTransaction,
+  updateBankTransactionClassification,
+} from "@/src/lib/banking";
 
 export const runtime = "nodejs";
 
-type MatchStatus = "MATCHED" | "UNMATCHED" | "IGNORED";
-
-type MatchType = "INVOICE" | "TAX_RECORD" | "MANUAL";
-
-function parseId(raw: unknown) {
-  const parsed = Number(raw);
+function parseOptionalId(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
   if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) return null;
   return parsed;
 }
 
-function parseStatus(raw: unknown): MatchStatus | null {
-  const normalized = String(raw ?? "").toUpperCase();
-  if (normalized === "MATCHED" || normalized === "UNMATCHED" || normalized === "IGNORED") {
-    return normalized as MatchStatus;
+function parseStatus(value: string | null) {
+  if (!value) return null;
+  return BANK_TRANSACTION_STATUSES.includes(value.toUpperCase() as (typeof BANK_TRANSACTION_STATUSES)[number])
+    ? (value.toUpperCase() as (typeof BANK_TRANSACTION_STATUSES)[number])
+    : null;
+}
+
+function parseMinorAmount(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/,/g, "").trim());
+    return Number.isFinite(parsed) ? Math.round(parsed) : null;
   }
   return null;
+}
+
+function parseVatTreatment(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return normalized === "INPUT" || normalized === "OUTPUT" || normalized === "EXEMPT"
+    ? normalized
+    : "NONE";
+}
+
+function parseWhtTreatment(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return normalized === "PAYABLE" || normalized === "RECEIVABLE" ? normalized : "NONE";
+}
+
+function parseSuggestedType(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return normalized === "INCOME" ||
+    normalized === "EXPENSE" ||
+    normalized === "TRANSFER" ||
+    normalized === "OWNER_DRAW"
+    ? normalized
+    : "UNKNOWN";
+}
+
+export async function GET(req: Request) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const auth = await requireRoleAtLeast(ctx.workspaceId, "VIEWER");
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
+
+  const featureAccess = await getWorkspaceFeatureAccess(ctx.workspaceId, "BANKING");
+  if (!featureAccess.ok) {
+    return NextResponse.json(
+      {
+        error: featureAccess.error,
+        currentPlan: featureAccess.plan,
+        requiredPlan: featureAccess.requiredPlan,
+      },
+      { status: 402 }
+    );
+  }
+
+  try {
+    const url = new URL(req.url);
+    const dashboard = await getWorkspaceBankingDashboard({
+      workspaceId: ctx.workspaceId,
+      status: parseStatus(url.searchParams.get("status")),
+      bankAccountId: parseOptionalId(url.searchParams.get("bankAccountId")),
+      clientBusinessId: parseOptionalId(url.searchParams.get("clientBusinessId")),
+      importId: parseOptionalId(url.searchParams.get("importId")),
+      query: url.searchParams.get("query"),
+    });
+
+    return NextResponse.json(dashboard);
+  } catch (error) {
+    logRouteError("banking reconcile dashboard failed", error, {
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
+    });
+    return NextResponse.json({ error: "Failed to load banking dashboard" }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
@@ -35,144 +113,164 @@ export async function POST(req: Request) {
   if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
+
   const featureAccess = await getWorkspaceFeatureAccess(ctx.workspaceId, "BANKING");
   if (!featureAccess.ok) {
     return NextResponse.json(
-      { error: featureAccess.error, currentPlan: featureAccess.plan, requiredPlan: featureAccess.requiredPlan },
+      {
+        error: featureAccess.error,
+        currentPlan: featureAccess.plan,
+        requiredPlan: featureAccess.requiredPlan,
+      },
       { status: 402 }
     );
   }
 
   try {
-    const body = await req.json();
-    const { transactionId, status, invoiceId, taxRecordId, matchType } = body as {
-      transactionId?: number | string;
-      status?: string;
-      invoiceId?: number | string;
-      taxRecordId?: number | string;
-      matchType?: string;
-    };
+    const body = (await req.json()) as Record<string, unknown>;
+    const action = typeof body.action === "string" ? body.action.trim().toLowerCase() : "";
+    const transactionId = parseOptionalId(body.transactionId);
 
-    const parsedTransactionId = parseId(transactionId);
-    if (!parsedTransactionId) {
+    if (!transactionId) {
       return NextResponse.json({ error: "transactionId is required" }, { status: 400 });
     }
 
-    const parsedStatus = parseStatus(status);
-    if (!parsedStatus) {
-      return NextResponse.json({ error: "status is required" }, { status: 400 });
-    }
-
-    const transaction = await prisma.bankTransaction.findFirst({
-      where: { id: parsedTransactionId, workspaceId: ctx.workspaceId },
-    });
-    if (!transaction) {
-      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
-    }
-
-    if (parsedStatus === "MATCHED") {
-      const parsedInvoiceId = invoiceId !== undefined ? parseId(invoiceId) : null;
-      const parsedTaxRecordId = taxRecordId !== undefined ? parseId(taxRecordId) : null;
-
-      if (!parsedInvoiceId && !parsedTaxRecordId) {
-        return NextResponse.json(
-          { error: "invoiceId or taxRecordId is required" },
-          { status: 400 }
-        );
-      }
-
-      if (parsedInvoiceId) {
-        const invoice = await prisma.invoice.findFirst({
-          where: { id: parsedInvoiceId, workspaceId: ctx.workspaceId },
-        });
-        if (!invoice) {
-          return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
-        }
-      }
-
-      if (parsedTaxRecordId) {
-        const record = await prisma.taxRecord.findFirst({
-          where: { id: parsedTaxRecordId, workspaceId: ctx.workspaceId },
-        });
-        if (!record) {
-          return NextResponse.json({ error: "Tax record not found" }, { status: 404 });
-        }
-      }
-
-      let resolvedMatchType: MatchType = "MANUAL";
-      const normalizedType = String(matchType ?? "").toUpperCase();
-      if (normalizedType === "INVOICE" || normalizedType === "TAX_RECORD") {
-        resolvedMatchType = normalizedType as MatchType;
-      } else if (parsedInvoiceId) {
-        resolvedMatchType = "INVOICE";
-      } else if (parsedTaxRecordId) {
-        resolvedMatchType = "TAX_RECORD";
-      }
-
-      await prisma.$transaction(async (tx) => {
-        await tx.reconciliationMatch.upsert({
-          where: { bankTransactionId: transaction.id },
-          update: {
-            invoiceId: parsedInvoiceId ?? null,
-            taxRecordId: parsedTaxRecordId ?? null,
-            matchType: resolvedMatchType,
-          },
-          create: {
-            workspaceId: ctx.workspaceId,
-            bankTransactionId: transaction.id,
-            invoiceId: parsedInvoiceId ?? null,
-            taxRecordId: parsedTaxRecordId ?? null,
-            matchType: resolvedMatchType,
-          },
-        });
-
-        await tx.bankTransaction.update({
-          where: { id: transaction.id },
-          data: { status: "MATCHED" },
-        });
+    if (action === "ignore") {
+      const transaction = await ignoreBankTransaction({
+        workspaceId: ctx.workspaceId,
+        transactionId,
       });
 
       await logAudit({
         workspaceId: ctx.workspaceId,
         actorUserId: ctx.userId,
-        action: "BANK_RECONCILE_MATCHED",
+        action: "BANK_TRANSACTION_IGNORED",
         metadata: {
-          transactionId: transaction.id,
-          invoiceId: parsedInvoiceId ?? null,
-          taxRecordId: parsedTaxRecordId ?? null,
-          matchType: resolvedMatchType,
+          transactionId,
         },
       });
 
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ transaction });
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.reconciliationMatch.deleteMany({
-        where: { bankTransactionId: transaction.id },
+    if (action === "reclassify") {
+      const transaction = await updateBankTransactionClassification({
+        workspaceId: ctx.workspaceId,
+        transactionId,
+        clientBusinessId: parseOptionalId(body.clientBusinessId),
+        suggestedType: parseSuggestedType(body.suggestedType),
+        counterpartyName:
+          typeof body.counterpartyName === "string" ? body.counterpartyName : null,
+        categoryName:
+          typeof body.categoryName === "string" ? body.categoryName : null,
+        vatTreatment: parseVatTreatment(body.vatTreatment),
+        whtTreatment: parseWhtTreatment(body.whtTreatment),
+        notes: typeof body.notes === "string" ? body.notes : null,
       });
 
-      await tx.bankTransaction.update({
-        where: { id: transaction.id },
-        data: { status: parsedStatus },
+      await logAudit({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        action: "BANK_TRANSACTION_RECLASSIFIED",
+        metadata: {
+          transactionId,
+        },
       });
-    });
 
-    await logAudit({
-      workspaceId: ctx.workspaceId,
-      actorUserId: ctx.userId,
-      action: parsedStatus === "IGNORED" ? "BANK_RECONCILE_IGNORED" : "BANK_RECONCILE_UNMATCHED",
-      metadata: {
-        transactionId: transaction.id,
-      },
-    });
+      return NextResponse.json({ transaction });
+    }
 
-    return NextResponse.json({ ok: true });
+    if (action === "create_ledger") {
+      const transaction = await createManualLedgerMatch({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        payload: {
+          transactionId,
+          clientBusinessId: parseOptionalId(body.clientBusinessId),
+          description: typeof body.description === "string" ? body.description : null,
+          reference: typeof body.reference === "string" ? body.reference : null,
+          vendorName: typeof body.vendorName === "string" ? body.vendorName : null,
+          categoryId: parseOptionalId(body.categoryId),
+          categoryName: typeof body.categoryName === "string" ? body.categoryName : null,
+          suggestedType: parseSuggestedType(body.suggestedType),
+          vatTreatment: parseVatTreatment(body.vatTreatment),
+          whtTreatment: parseWhtTreatment(body.whtTreatment),
+          vatAmountMinor: parseMinorAmount(body.vatAmountMinor),
+          whtAmountMinor: parseMinorAmount(body.whtAmountMinor),
+          notes: typeof body.notes === "string" ? body.notes : null,
+        },
+      });
+
+      await logAudit({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        action: "BANK_TRANSACTION_POSTED",
+        metadata: {
+          transactionId,
+          mode: "manual",
+        },
+      });
+
+      return NextResponse.json({ transaction });
+    }
+
+    if (action === "split") {
+      const rawLines = Array.isArray(body.lines) ? body.lines : [];
+      if (rawLines.length < 2) {
+        return NextResponse.json(
+          { error: "Provide at least two split lines" },
+          { status: 400 }
+        );
+      }
+
+      const transaction = await splitBankTransaction({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        transactionId,
+        clientBusinessId: parseOptionalId(body.clientBusinessId),
+        lines: rawLines.map((line) => {
+          const value = line as Record<string, unknown>;
+          return {
+            description: typeof value.description === "string" ? value.description : "",
+            reference: typeof value.reference === "string" ? value.reference : null,
+            amountMinor: parseMinorAmount(value.amountMinor) ?? 0,
+            vendorName: typeof value.vendorName === "string" ? value.vendorName : null,
+            categoryId: parseOptionalId(value.categoryId),
+            categoryName: typeof value.categoryName === "string" ? value.categoryName : null,
+            suggestedType: parseSuggestedType(value.suggestedType),
+            vatTreatment: parseVatTreatment(value.vatTreatment),
+            whtTreatment: parseWhtTreatment(value.whtTreatment),
+            vatAmountMinor: parseMinorAmount(value.vatAmountMinor),
+            whtAmountMinor: parseMinorAmount(value.whtAmountMinor),
+            notes: typeof value.notes === "string" ? value.notes : null,
+          };
+        }),
+      });
+
+      await logAudit({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        action: "BANK_TRANSACTION_SPLIT",
+        metadata: {
+          transactionId,
+          lineCount: rawLines.length,
+        },
+      });
+
+      return NextResponse.json({ transaction });
+    }
+
+    return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
   } catch (error) {
-    logRouteError("bank reconcile failed", error, {
+    logRouteError("bank reconcile action failed", error, {
       workspaceId: ctx.workspaceId,
       userId: ctx.userId,
     });
-    return NextResponse.json({ error: "Failed to reconcile transaction" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to process reconcile action",
+      },
+      { status: 500 }
+    );
   }
 }

@@ -17,6 +17,10 @@ function readEnv(name: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function hasAnyEnv(names: string[]) {
+  return names.some((name) => Boolean(readEnv(name)));
+}
+
 function requireEnv(name: string) {
   const value = readEnv(name);
   if (!value) {
@@ -105,10 +109,19 @@ export function getOpenAiServerConfig() {
   };
 }
 
+export function hasOpenAiServerConfig() {
+  return Boolean(readEnv("OPENAI_API_KEY"));
+}
+
 export function getPaystackServerConfig() {
   return {
     secretKey: requireEnv("PAYSTACK_SECRET_KEY"),
+    webhookSecret: readEnv("PAYSTACK_WEBHOOK_SECRET") || requireEnv("PAYSTACK_SECRET_KEY"),
   };
+}
+
+export function hasPaystackServerConfig() {
+  return Boolean(readEnv("PAYSTACK_SECRET_KEY"));
 }
 
 export function getPaymentRuntimeConfig() {
@@ -123,6 +136,8 @@ export function getEnvironmentHealth(): EnvironmentHealth {
   const provider = getDatabaseProvider();
   const missing: string[] = [];
   const warnings: string[] = [];
+  const smtpEnvNames = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "EMAIL_FROM"];
+  const hasPasswordResetEmailConfig = smtpEnvNames.every((name) => Boolean(readEnv(name)));
 
   if (!readEnv("DATABASE_URL")) missing.push("DATABASE_URL");
   if (!readEnv("APP_URL")) warnings.push("APP_URL not set; defaulting to http://localhost:3000");
@@ -131,14 +146,36 @@ export function getEnvironmentHealth(): EnvironmentHealth {
   if (!readEnv("PAYSTACK_SECRET_KEY")) {
     warnings.push("PAYSTACK_SECRET_KEY not set; billing checkout will be unavailable");
   }
-  if (!readEnv("PAYSTACK_PLAN_GROWTH")) {
-    warnings.push("PAYSTACK_PLAN_GROWTH not set; Growth checkout will be unavailable");
+  if (!readEnv("PAYSTACK_WEBHOOK_SECRET")) {
+    warnings.push(
+      "PAYSTACK_WEBHOOK_SECRET not set; webhook signature verification will fall back to PAYSTACK_SECRET_KEY"
+    );
   }
-  if (!readEnv("PAYSTACK_PLAN_BUSINESS")) {
-    warnings.push("PAYSTACK_PLAN_BUSINESS not set; Business checkout will be unavailable");
+  if (!hasAnyEnv(["PAYSTACK_PLAN_GROWTH"])) {
+    warnings.push("PAYSTACK_PLAN_GROWTH not set; Growth monthly checkout will be unavailable");
   }
-  if (!readEnv("PAYSTACK_PLAN_ACCOUNTANT")) {
-    warnings.push("PAYSTACK_PLAN_ACCOUNTANT not set; Accountant checkout will be unavailable");
+  if (!hasAnyEnv(["PAYSTACK_PLAN_GROWTH_ANNUAL"])) {
+    warnings.push("PAYSTACK_PLAN_GROWTH_ANNUAL not set; Growth annual checkout will be unavailable");
+  }
+  if (!hasAnyEnv(["PAYSTACK_PLAN_PROFESSIONAL", "PAYSTACK_PLAN_BUSINESS"])) {
+    warnings.push(
+      "PAYSTACK_PLAN_PROFESSIONAL or PAYSTACK_PLAN_BUSINESS not set; Professional monthly checkout will be unavailable"
+    );
+  }
+  if (!hasAnyEnv(["PAYSTACK_PLAN_PROFESSIONAL_ANNUAL", "PAYSTACK_PLAN_BUSINESS_ANNUAL"])) {
+    warnings.push(
+      "PAYSTACK_PLAN_PROFESSIONAL_ANNUAL or PAYSTACK_PLAN_BUSINESS_ANNUAL not set; Professional annual checkout will be unavailable"
+    );
+  }
+  if (!hasAnyEnv(["PAYSTACK_PLAN_ENTERPRISE", "PAYSTACK_PLAN_ACCOUNTANT"])) {
+    warnings.push(
+      "PAYSTACK_PLAN_ENTERPRISE not set; Enterprise checkout automation remains unavailable and sales-led"
+    );
+  }
+  if (!hasPasswordResetEmailConfig) {
+    warnings.push(
+      "SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and EMAIL_FROM are not fully configured; password reset emails will only preview locally and will fail in production"
+    );
   }
 
   return {

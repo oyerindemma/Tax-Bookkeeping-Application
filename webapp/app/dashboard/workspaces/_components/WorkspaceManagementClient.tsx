@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type Role = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
-type Plan = "FREE" | "GROWTH" | "BUSINESS" | "ACCOUNTANT" | null;
+type Plan = "STARTER" | "GROWTH" | "PROFESSIONAL" | "ENTERPRISE" | null;
 
 type WorkspaceSummary = {
   id: number;
@@ -41,6 +41,13 @@ const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Admin",
   MEMBER: "Member",
   VIEWER: "Viewer",
+};
+
+const PLAN_LABELS: Record<Exclude<Plan, null>, string> = {
+  STARTER: "Starter",
+  GROWTH: "Growth",
+  PROFESSIONAL: "Professional",
+  ENTERPRISE: "Enterprise",
 };
 
 function canManageWorkspace(role: Role) {
@@ -492,7 +499,9 @@ export default function WorkspaceManagementClient({
                     </div>
                     <div className="rounded-md border px-3 py-2">
                       <div className="text-xs text-muted-foreground">Plan</div>
-                      <div className="text-lg font-semibold">{workspace.plan ?? "FREE"}</div>
+                      <div className="text-lg font-semibold">
+                        {workspace.plan ? PLAN_LABELS[workspace.plan] : "Starter"}
+                      </div>
                     </div>
                   </div>
                 </div>

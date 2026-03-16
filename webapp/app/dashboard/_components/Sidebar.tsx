@@ -6,6 +6,9 @@ import { Separator } from "@/components/ui/separator";
 const navItems = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/workspaces", label: "Workspaces" },
+  { href: "/dashboard/client-businesses", label: "Client businesses" },
+  { href: "/dashboard/bookkeeping/review", label: "Bookkeeping review" },
+  { href: "/dashboard/tax-summary", label: "Tax summary" },
   { href: "/dashboard/tax-records", label: "Tax records" },
   { href: "/dashboard/invoices", label: "Invoices" },
   { href: "/dashboard/recurring-invoices", label: "Recurring invoices" },
@@ -41,7 +44,7 @@ export default function Sidebar() {
       </nav>
       <Separator className="my-4" />
       <div className="px-2 text-xs text-muted-foreground">
-        Secure workspace accounting
+        Multi-entity accounting workspace
       </div>
     </aside>
   );

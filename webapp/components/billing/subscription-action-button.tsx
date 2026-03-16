@@ -6,6 +6,7 @@ import type { SubscriptionPlan } from "@prisma/client";
 import { Button } from "@/components/ui/button";
 
 type ButtonVariant = "default" | "outline" | "secondary";
+type BillingInterval = "MONTHLY" | "ANNUAL";
 
 type SubscriptionActionButtonProps = {
   plan: SubscriptionPlan;
@@ -13,10 +14,23 @@ type SubscriptionActionButtonProps = {
   currentPlan: SubscriptionPlan | null;
   loggedIn: boolean;
   hasActiveWorkspace: boolean;
+  billingInterval?: BillingInterval;
   disabled?: boolean;
   variant?: ButtonVariant;
   className?: string;
 };
+
+const PLAN_RANK: Record<SubscriptionPlan, number> = {
+  STARTER: 0,
+  GROWTH: 1,
+  PROFESSIONAL: 2,
+  ENTERPRISE: 3,
+};
+
+function isPlanIncluded(currentPlan: SubscriptionPlan | null, plan: SubscriptionPlan) {
+  if (!currentPlan) return false;
+  return PLAN_RANK[currentPlan] >= PLAN_RANK[plan];
+}
 
 function buildLabel(input: {
   plan: SubscriptionPlan;
@@ -26,12 +40,17 @@ function buildLabel(input: {
   hasActiveWorkspace: boolean;
   loading: boolean;
 }) {
+  if (
+    input.currentPlan &&
+    PLAN_RANK[input.currentPlan] > PLAN_RANK[input.plan]
+  ) {
+    return "Included already";
+  }
   if (input.currentPlan === input.plan) return "Current plan";
   if (input.loading) return "Redirecting...";
-  if (input.plan === "FREE") {
-    return input.loggedIn ? "Manage free plan" : "Get started free";
-  }
-  if (!input.loggedIn) return `Choose ${input.planName}`;
+  if (input.plan === "ENTERPRISE") return "Contact Sales";
+  if (input.plan === "STARTER") return "Start Free";
+  if (!input.loggedIn) return `Upgrade to ${input.planName}`;
   if (!input.hasActiveWorkspace) return "Create workspace";
   return `Upgrade to ${input.planName}`;
 }
@@ -42,10 +61,12 @@ function getHref(input: {
   loggedIn: boolean;
   hasActiveWorkspace: boolean;
 }) {
+  if (isPlanIncluded(input.currentPlan, input.plan)) return null;
   if (input.currentPlan === input.plan) return null;
+  if (input.plan === "ENTERPRISE") return "/contact";
   if (!input.loggedIn) return "/signup";
   if (!input.hasActiveWorkspace) return "/dashboard/workspaces";
-  if (input.plan === "FREE") return "/dashboard/billing";
+  if (input.plan === "STARTER") return "/dashboard/billing";
   return null;
 }
 
@@ -55,6 +76,7 @@ export function SubscriptionActionButton({
   currentPlan,
   loggedIn,
   hasActiveWorkspace,
+  billingInterval = "MONTHLY",
   disabled = false,
   variant = "default",
   className,
@@ -77,9 +99,10 @@ export function SubscriptionActionButton({
     hasActiveWorkspace,
     loading,
   });
+  const planIncluded = isPlanIncluded(currentPlan, plan);
 
   async function handleCheckout() {
-    if (disabled || loading || currentPlan === plan) return;
+    if (disabled || loading || planIncluded) return;
 
     setError(null);
     setLoading(true);
@@ -88,7 +111,7 @@ export function SubscriptionActionButton({
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
+        body: JSON.stringify({ plan, interval: billingInterval }),
       });
 
       const data = await res.json();
@@ -119,8 +142,8 @@ export function SubscriptionActionButton({
         <Button
           type="button"
           onClick={handleCheckout}
-          disabled={disabled || loading || currentPlan === plan}
-          variant={currentPlan === plan ? "secondary" : variant}
+          disabled={disabled || loading || planIncluded}
+          variant={planIncluded ? "secondary" : variant}
           className={className}
         >
           {label}

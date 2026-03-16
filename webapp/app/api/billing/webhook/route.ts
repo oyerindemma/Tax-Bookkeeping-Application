@@ -3,6 +3,7 @@ import { logRouteError } from "@/src/lib/logger";
 import type { PaystackSubscriptionPayload, PaystackTransactionVerificationData } from "@/src/lib/paystack";
 import { verifyPaystackSignature } from "@/src/lib/paystack";
 import {
+  markWorkspaceSubscriptionStatusFromPaystackEvent,
   parseBillingMetadata,
   syncWorkspaceSubscriptionFromPaystackSubscription,
   syncWorkspaceSubscriptionFromPaystackTransaction,
@@ -48,17 +49,32 @@ export async function POST(req: Request) {
         );
         break;
       }
+      case "subscription.enable": {
+        await syncWorkspaceSubscriptionFromPaystackSubscription(
+          event.data as PaystackSubscriptionPayload,
+          { statusHint: "active" }
+        );
+        break;
+      }
       case "subscription.not_renew": {
         await syncWorkspaceSubscriptionFromPaystackSubscription(
           event.data as PaystackSubscriptionPayload,
-          { statusHint: "non-renewing" }
+          { statusHint: "non_renewing" }
         );
         break;
       }
       case "subscription.disable": {
         await syncWorkspaceSubscriptionFromPaystackSubscription(
           event.data as PaystackSubscriptionPayload,
-          { statusHint: "disabled", forceFree: true }
+          { statusHint: "disabled" }
+        );
+        break;
+      }
+      case "invoice.payment_failed":
+      case "charge.failed": {
+        await markWorkspaceSubscriptionStatusFromPaystackEvent(
+          event.data,
+          "payment_failed"
         );
         break;
       }

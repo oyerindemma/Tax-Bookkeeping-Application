@@ -53,6 +53,15 @@ export type PaystackTransactionVerificationData = {
   metadata?: unknown;
 };
 
+export type PaystackSubscriptionManagementEmailData = {
+  sent?: boolean;
+};
+
+export type PaystackSubscriptionDisableData = {
+  subscription_code?: string | null;
+  status?: string | null;
+};
+
 async function paystackRequest<T>(
   path: string,
   init: RequestInit = {}
@@ -116,9 +125,43 @@ export async function verifyPaystackTransaction(reference: string) {
   );
 }
 
+export async function sendPaystackSubscriptionManagementEmail(subscriptionCode: string) {
+  return paystackRequest<PaystackSubscriptionManagementEmailData>(
+    `/subscription/${encodeURIComponent(subscriptionCode)}/manage/email`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+}
+
+export async function disablePaystackSubscription(input: {
+  subscriptionCode: string;
+  emailToken: string;
+}) {
+  return paystackRequest<PaystackSubscriptionDisableData>("/subscription/disable", {
+    method: "POST",
+    body: JSON.stringify({
+      code: input.subscriptionCode,
+      token: input.emailToken,
+    }),
+  });
+}
+
 export function verifyPaystackSignature(rawBody: string, signature: string | null | undefined) {
   if (!signature) return false;
-  const { secretKey } = getPaystackServerConfig();
-  const expected = crypto.createHmac("sha512", secretKey).update(rawBody).digest("hex");
-  return expected === signature;
+  let webhookSecret: string;
+  try {
+    webhookSecret = getPaystackServerConfig().webhookSecret;
+  } catch {
+    return false;
+  }
+  const expected = crypto.createHmac("sha512", webhookSecret).update(rawBody).digest("hex");
+  const provided = signature.trim();
+
+  if (expected.length !== provided.length) return false;
+
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
 }

@@ -1,51 +1,89 @@
 import { NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
-import { prisma } from "@/src/lib/prisma";
+import { seedDefaultExpenseCategories } from "@/src/lib/expense-categories";
 import {
   buildSessionCookieOptions,
   createSession,
+  normalizeEmail,
   SESSION_COOKIE_NAME,
+  validateEmail,
+  verifyPassword,
 } from "@/src/lib/auth";
+import { logRouteError } from "@/src/lib/logger";
+import { prisma } from "@/src/lib/prisma";
 import {
   buildWorkspaceCookieOptions,
   WORKSPACE_COOKIE_NAME,
 } from "@/src/lib/workspaces";
-import { seedDefaultExpenseCategories } from "@/src/lib/expense-categories";
-import { logRouteError } from "@/src/lib/logger";
 
 export const runtime = "nodejs";
 
+type LoginBody = {
+  email?: string;
+  password?: string;
+};
+
+function buildValidationError(body: LoginBody) {
+  const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  const fieldErrors: Record<string, string> = {};
+
+  const emailError = validateEmail(email);
+  if (emailError) fieldErrors.email = emailError;
+
+  if (!password) {
+    fieldErrors.password = "Enter your password.";
+  }
+
+  if (Object.keys(fieldErrors).length === 0) {
+    return null;
+  }
+
+  return {
+    error: "Please enter both your email and password.",
+    fieldErrors,
+  };
+}
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { email, password } = body as {
-      email?: string;
-      password?: string;
-    };
+    const body = (await req.json()) as LoginBody;
+    const validationError = buildValidationError(body);
 
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: "email and password are required" },
-        { status: 400 }
-      );
+    if (validationError) {
+      return NextResponse.json(validationError, { status: 400 });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const email = normalizeEmail(body.email ?? "");
+    const password = body.password ?? "";
 
     const user = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        password: true,
+        fullName: true,
+        role: true,
+      },
     });
 
     if (!user) {
-      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Invalid email or password." },
+        { status: 401 }
+      );
     }
 
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) {
-      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+    const passwordMatches = await verifyPassword(password, user.password);
+    if (!passwordMatches) {
+      return NextResponse.json(
+        { error: "Invalid email or password." },
+        { status: 401 }
+      );
     }
 
     const { token, expiresAt } = await createSession(user.id);
+
     const membership = await prisma.workspaceMember.findFirst({
       where: {
         userId: user.id,
@@ -55,11 +93,14 @@ export async function POST(req: Request) {
       },
       orderBy: { workspace: { name: "asc" } },
     });
+
     let workspaceId = membership?.workspaceId;
+
     if (!workspaceId) {
       const totalMemberships = await prisma.workspaceMember.count({
         where: { userId: user.id },
       });
+
       if (totalMemberships === 0) {
         const workspace = await prisma.$transaction(async (tx) => {
           const createdWorkspace = await tx.workspace.create({
@@ -70,20 +111,23 @@ export async function POST(req: Request) {
               },
               subscription: {
                 create: {
-                  plan: "FREE",
+                  plan: "STARTER",
                   status: "free",
                 },
               },
             },
+            select: { id: true },
           });
 
           await seedDefaultExpenseCategories(tx, createdWorkspace.id);
 
           return createdWorkspace;
         });
+
         workspaceId = workspace.id;
       }
     }
+
     const res = NextResponse.json({
       user: {
         id: user.id,
@@ -94,6 +138,7 @@ export async function POST(req: Request) {
     });
 
     res.cookies.set(SESSION_COOKIE_NAME, token, buildSessionCookieOptions(expiresAt));
+
     if (workspaceId) {
       res.cookies.set(
         WORKSPACE_COOKIE_NAME,
@@ -101,11 +146,12 @@ export async function POST(req: Request) {
         buildWorkspaceCookieOptions()
       );
     }
+
     return res;
   } catch (error) {
     logRouteError("login failed", error);
     return NextResponse.json(
-      { error: "Server error logging in" },
+      { error: "We could not log you in right now. Please try again." },
       { status: 500 }
     );
   }

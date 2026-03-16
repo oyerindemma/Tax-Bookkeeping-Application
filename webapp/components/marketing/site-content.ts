@@ -256,27 +256,27 @@ export const GOVERNANCE_FEATURES: IconCard[] = [
 ];
 
 export const PRICING_INCLUSIONS = [
-  "Invoices and client management",
-  "Tax records, expenses, and reports",
-  "Workspace roles and member limits",
-  "Upgrade paths for AI, banking, recurring billing, and audit controls",
+  "Core bookkeeping, VAT summary, and reporting from day one",
+  "Workspace-scoped accounting workflows for Nigerian businesses and firms",
+  "Upgrade paths for AI bookkeeping, banking reconciliation, and tax filing",
+  "Add-on-ready billing structure for extra businesses, scans, and filing automation",
 ];
 
 export const PRICING_FAQ = [
   {
     question: "Can I start without speaking to sales?",
     answer:
-      "Yes. The Free plan is self-serve, and paid plans can be activated directly on the pricing page with Paystack.",
+      "Yes. Starter is free to begin with, Growth and Professional remain self-serve where billing is configured, and Enterprise stays sales-led.",
   },
   {
     question: "Which features are reserved for paid plans?",
     answer:
-      "Free covers the core bookkeeping workflow. Growth unlocks AI tools, Business adds banking and recurring invoices, and Accountant adds audit log and advanced team controls.",
+      "Starter covers manual bookkeeping, VAT summaries, and basic reports. Growth unlocks AI receipt scanning and bookkeeping automation, while Professional adds banking reconciliation, team collaboration, audit logs, and the tax filing assistant.",
   },
   {
-    question: "When should I move beyond Free?",
+    question: "When should I upgrade beyond Starter?",
     answer:
-      "Upgrade when you need more workspace members, more tax-record volume, or premium workflows like AI capture, banking, recurring billing, and audit visibility.",
+      "Upgrade when you need more businesses under one workspace, more AI scan capacity, banking reconciliation, or multi-user accounting workflows.",
   },
 ];
 

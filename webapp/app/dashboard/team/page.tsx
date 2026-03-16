@@ -1,10 +1,6 @@
 import { prisma } from "@/src/lib/prisma";
 import { getAuthContext } from "@/src/lib/auth";
-import {
-  formatPlanPricePerMonth,
-  getPlanConfig,
-  getWorkspaceFeatureAccess,
-} from "@/src/lib/billing";
+import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import TeamClient from "./TeamClient";
 import { FeatureGateCard } from "@/components/billing/feature-gate-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,15 +59,13 @@ export default async function TeamPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Team</h1>
           <p className="text-muted-foreground">
-            Team invites and role management are available on the Accountant plan.
+            Team invites and role management are available from Professional upward.
           </p>
         </div>
         <FeatureGateCard
-          featureName="Team collaboration"
-          featureDescription="Invite teammates, manage workspace roles, and keep collaboration aligned to plan."
-          currentPlanName={getPlanConfig(access.plan).name}
-          requiredPlanName={getPlanConfig(access.requiredPlan).name}
-          requiredPlanPrice={formatPlanPricePerMonth(access.requiredPlan)}
+          feature="TEAM_COLLABORATION"
+          currentPlan={access.plan}
+          requiredPlan={access.requiredPlan}
         />
       </section>
     );

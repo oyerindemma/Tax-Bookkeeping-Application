@@ -2,7 +2,12 @@ import "server-only";
 
 import type { SubscriptionPlan } from "@prisma/client";
 import { prisma } from "@/src/lib/prisma";
-import { resolvePlanFromPaystackPlanCode } from "@/src/lib/billing";
+import {
+  normalizeSubscriptionPlan,
+  resolveBillingIntervalFromPaystackPlanCode,
+  resolvePlanFromPaystackPlanCode,
+  type BillingInterval,
+} from "@/src/lib/billing";
 import type {
   PaystackCustomer,
   PaystackSubscriptionPayload,
@@ -12,6 +17,7 @@ import type {
 export type BillingMetadata = {
   workspaceId?: number | null;
   plan?: SubscriptionPlan | null;
+  interval?: BillingInterval | null;
   userId?: number | null;
   source?: string | null;
 };
@@ -33,20 +39,29 @@ function parseDate(value: string | null | undefined) {
 }
 
 function normalizeStatus(status: string | null | undefined) {
-  return parseString(status)?.toLowerCase() ?? null;
+  return parseString(status)?.toLowerCase().replace(/[\s.-]+/g, "_") ?? null;
 }
 
 function parsePlan(value: unknown): SubscriptionPlan | null {
+  return normalizeSubscriptionPlan(parseString(value));
+}
+
+function parseBillingInterval(value: unknown): BillingInterval | null {
   const normalized = parseString(value)?.toUpperCase();
-  if (
-    normalized === "FREE" ||
-    normalized === "GROWTH" ||
-    normalized === "BUSINESS" ||
-    normalized === "ACCOUNTANT"
-  ) {
+  if (normalized === "MONTHLY" || normalized === "ANNUAL") {
     return normalized;
   }
   return null;
+}
+
+function addBillingIntervalFromNow(interval: BillingInterval) {
+  const nextDate = new Date();
+  if (interval === "ANNUAL") {
+    nextDate.setFullYear(nextDate.getFullYear() + 1);
+  } else {
+    nextDate.setMonth(nextDate.getMonth() + 1);
+  }
+  return nextDate;
 }
 
 function resolveCustomerCode(customer: PaystackCustomer | string | null | undefined) {
@@ -103,9 +118,11 @@ async function findSubscriptionTarget(input: {
 
 export function createSubscriptionCheckoutReference(
   workspaceId: number,
-  plan: SubscriptionPlan
+  plan: SubscriptionPlan,
+  interval: BillingInterval,
+  useStubPrefix = false
 ) {
-  return `sub_${workspaceId}_${plan}_${Date.now()}`;
+  return `${useStubPrefix ? "stub_" : ""}sub_${workspaceId}_${plan}_${interval}_${Date.now()}`;
 }
 
 export function serializeBillingMetadata(metadata: BillingMetadata) {
@@ -130,8 +147,26 @@ export function parseBillingMetadata(value: unknown): BillingMetadata {
   return {
     workspaceId: parseInteger(candidate.workspaceId),
     plan: parsePlan(candidate.plan),
+    interval: parseBillingInterval(candidate.interval),
     userId: parseInteger(candidate.userId),
     source: parseString(candidate.source),
+  };
+}
+
+export function parseSubscriptionCheckoutReference(reference: string) {
+  const match =
+    /^(stub_)?sub_(\d+)_(STARTER|GROWTH|PROFESSIONAL|ENTERPRISE)(?:_(MONTHLY|ANNUAL))?_(\d+)$/i.exec(
+      reference.trim()
+    );
+
+  if (!match) return null;
+
+  return {
+    isStub: Boolean(match[1]),
+    workspaceId: Number(match[2]),
+    plan: normalizeSubscriptionPlan(match[3]) ?? "STARTER",
+    interval: parseBillingInterval(match[4]) ?? "MONTHLY",
+    createdAtMs: Number(match[5]),
   };
 }
 
@@ -166,31 +201,38 @@ export async function syncWorkspaceSubscriptionFromPaystackTransaction(
   const targetWorkspaceId = metadata.workspaceId ?? existing?.workspaceId ?? null;
   if (!targetWorkspaceId) return null;
 
+  const billingInterval =
+    resolveBillingIntervalFromPaystackPlanCode(planCode) ??
+    metadata.interval ??
+    parseBillingInterval(existing?.billingInterval) ??
+    "MONTHLY";
   const currentPeriodEnd = parseDate(transaction.subscription?.next_payment_date);
   const status = normalizeStatus(transaction.subscription?.status) ?? normalizeStatus(transaction.status);
-  const finalPlan = plan ?? existing?.plan ?? "FREE";
+  const finalPlan = plan ?? existing?.plan ?? "STARTER";
 
   return prisma.workspaceSubscription.upsert({
     where: { workspaceId: targetWorkspaceId },
     update: {
       plan: finalPlan,
-      status: status ?? (finalPlan === "FREE" ? "free" : "active"),
+      status: status ?? (finalPlan === "STARTER" ? "free" : "active"),
       paystackCustomerCode: customerCode ?? undefined,
       paystackSubscriptionCode: subscriptionCode ?? undefined,
       paystackSubscriptionToken: subscriptionToken ?? undefined,
       paystackPlanCode: planCode ?? undefined,
       paystackReference: parseString(transaction.reference) ?? undefined,
+      billingInterval,
       currentPeriodEnd,
     },
     create: {
       workspaceId: targetWorkspaceId,
       plan: finalPlan,
-      status: status ?? (finalPlan === "FREE" ? "free" : "active"),
+      status: status ?? (finalPlan === "STARTER" ? "free" : "active"),
       paystackCustomerCode: customerCode ?? undefined,
       paystackSubscriptionCode: subscriptionCode ?? undefined,
       paystackSubscriptionToken: subscriptionToken ?? undefined,
       paystackPlanCode: planCode ?? undefined,
       paystackReference: parseString(transaction.reference) ?? undefined,
+      billingInterval,
       currentPeriodEnd,
     },
   });
@@ -223,32 +265,145 @@ export async function syncWorkspaceSubscriptionFromPaystackSubscription(
   if (!targetWorkspaceId) return null;
 
   const forceFree = options.forceFree === true;
+  const billingInterval =
+    resolveBillingIntervalFromPaystackPlanCode(planCode) ??
+    metadata.interval ??
+    parseBillingInterval(existing?.billingInterval) ??
+    "MONTHLY";
   const currentPeriodEnd = parseDate(subscription.next_payment_date);
   const status =
     normalizeStatus(options.statusHint) ??
     normalizeStatus(subscription.status) ??
     (forceFree ? "free" : null);
-  const finalPlan = forceFree ? "FREE" : plan ?? existing?.plan ?? "FREE";
+  const finalPlan = forceFree ? "STARTER" : plan ?? existing?.plan ?? "STARTER";
 
   return prisma.workspaceSubscription.upsert({
     where: { workspaceId: targetWorkspaceId },
     update: {
       plan: finalPlan,
-      status: status ?? (finalPlan === "FREE" ? "free" : "active"),
+      status: status ?? (finalPlan === "STARTER" ? "free" : "active"),
       paystackCustomerCode: customerCode ?? undefined,
       paystackSubscriptionCode: subscriptionCode ?? undefined,
       paystackSubscriptionToken: subscriptionToken ?? undefined,
       paystackPlanCode: planCode ?? undefined,
+      billingInterval,
       currentPeriodEnd,
     },
     create: {
       workspaceId: targetWorkspaceId,
       plan: finalPlan,
-      status: status ?? (finalPlan === "FREE" ? "free" : "active"),
+      status: status ?? (finalPlan === "STARTER" ? "free" : "active"),
       paystackCustomerCode: customerCode ?? undefined,
       paystackSubscriptionCode: subscriptionCode ?? undefined,
       paystackSubscriptionToken: subscriptionToken ?? undefined,
       paystackPlanCode: planCode ?? undefined,
+      billingInterval,
+      currentPeriodEnd,
+    },
+  });
+}
+
+export async function syncWorkspaceSubscriptionFromLocalTestReference(reference: string) {
+  const parsed = parseSubscriptionCheckoutReference(reference);
+  if (!parsed?.isStub) return null;
+
+  return prisma.workspaceSubscription.upsert({
+    where: { workspaceId: parsed.workspaceId },
+    update: {
+      plan: parsed.plan,
+      status: parsed.plan === "STARTER" ? "free" : "active",
+      billingInterval: parsed.interval,
+      paystackReference: reference,
+      currentPeriodEnd:
+        parsed.plan === "STARTER" ? null : addBillingIntervalFromNow(parsed.interval),
+    },
+    create: {
+      workspaceId: parsed.workspaceId,
+      plan: parsed.plan,
+      status: parsed.plan === "STARTER" ? "free" : "active",
+      billingInterval: parsed.interval,
+      paystackReference: reference,
+      currentPeriodEnd:
+        parsed.plan === "STARTER" ? null : addBillingIntervalFromNow(parsed.interval),
+    },
+  });
+}
+
+export async function markWorkspaceSubscriptionStatusFromPaystackEvent(
+  payload: unknown,
+  statusHint: string
+) {
+  const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const nestedSubscription =
+    record.subscription && typeof record.subscription === "object"
+      ? (record.subscription as PaystackSubscriptionPayload)
+      : null;
+
+  const metadata = parseBillingMetadata(record.metadata ?? nestedSubscription?.metadata);
+  const customerCode = resolveCustomerCode(
+    (record.customer as PaystackCustomer | string | null | undefined) ?? nestedSubscription?.customer
+  );
+  const subscriptionCode =
+    parseString(record.subscription_code) ??
+    parseString(nestedSubscription?.subscription_code);
+  const reference = parseString(record.reference);
+  const planCode = resolvePlanCode(
+    record.plan_object && typeof record.plan_object === "object"
+      ? (record.plan_object as { plan_code?: string | null })
+      : null,
+    (record.plan as PaystackSubscriptionPayload["plan"]) ?? nestedSubscription?.plan ?? null
+  );
+
+  const existing = await findSubscriptionTarget({
+    workspaceId: metadata.workspaceId,
+    paystackSubscriptionCode: subscriptionCode,
+    paystackCustomerCode: customerCode,
+    paystackReference: reference,
+  });
+
+  const targetWorkspaceId = metadata.workspaceId ?? existing?.workspaceId ?? null;
+  if (!targetWorkspaceId) return null;
+
+  const billingInterval =
+    resolveBillingIntervalFromPaystackPlanCode(planCode) ??
+    metadata.interval ??
+    parseBillingInterval(existing?.billingInterval) ??
+    "MONTHLY";
+  const currentPeriodEnd =
+    parseDate(
+      parseString(record.next_payment_date) ?? parseString(nestedSubscription?.next_payment_date)
+    ) ??
+    existing?.currentPeriodEnd ??
+    null;
+  const finalPlan =
+    resolvePlanCandidate([
+      resolvePlanFromPaystackPlanCode(planCode),
+      metadata.plan,
+      existing?.plan,
+    ]) ?? "STARTER";
+  const normalizedStatus = normalizeStatus(statusHint) ?? "active";
+
+  return prisma.workspaceSubscription.upsert({
+    where: { workspaceId: targetWorkspaceId },
+    update: {
+      plan: finalPlan,
+      status: normalizedStatus,
+      billingInterval,
+      paystackCustomerCode: customerCode ?? undefined,
+      paystackSubscriptionCode: subscriptionCode ?? undefined,
+      paystackPlanCode: planCode ?? undefined,
+      paystackReference: reference ?? undefined,
+      currentPeriodEnd,
+    },
+    create: {
+      workspaceId: targetWorkspaceId,
+      plan: finalPlan,
+      status: normalizedStatus,
+      billingInterval,
+      paystackCustomerCode: customerCode ?? undefined,
+      paystackSubscriptionCode: subscriptionCode ?? undefined,
+      paystackPlanCode: planCode ?? undefined,
+      paystackReference: reference ?? undefined,
       currentPeriodEnd,
     },
   });

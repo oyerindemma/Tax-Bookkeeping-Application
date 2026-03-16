@@ -1,11 +1,7 @@
 import { FeatureGateCard } from "@/components/billing/feature-gate-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/src/lib/auth";
-import {
-  formatPlanPricePerMonth,
-  getPlanConfig,
-  getWorkspaceFeatureAccess,
-} from "@/src/lib/billing";
+import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import { getActiveWorkspaceMembership } from "@/src/lib/workspaces";
 import ReconcileClient from "./_components/ReconcileClient";
 
@@ -37,19 +33,23 @@ export default async function ReconcilePage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Reconcile</h1>
           <p className="text-muted-foreground">
-            Upgrade this workspace to match bank transactions against invoices and tax records.
+            Professional unlocks bank statement AI reconciliation for accountant workflows.
           </p>
         </div>
         <FeatureGateCard
-          featureName="Banking and reconciliation"
-          featureDescription="Reconcile imported bank activity against invoices and tax records."
-          currentPlanName={getPlanConfig(access.plan).name}
-          requiredPlanName={getPlanConfig(access.requiredPlan).name}
-          requiredPlanPrice={formatPlanPricePerMonth(access.requiredPlan)}
+          feature="BANKING"
+          currentPlan={access.plan}
+          requiredPlan={access.requiredPlan}
+          note="CSV import, transaction matching, and reconciliation review stay on Professional and Enterprise."
         />
       </section>
     );
   }
 
-  return <ReconcileClient role={membership.role} />;
+  return (
+    <ReconcileClient
+      role={membership.role}
+      developmentBillingBypass={access.bypassed}
+    />
+  );
 }

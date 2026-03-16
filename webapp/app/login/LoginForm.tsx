@@ -15,6 +15,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+type FieldErrors = Partial<Record<"email" | "password", string>>;
+
 function getSafeNextPath(raw: string | null) {
   if (!raw) return null;
   if (!raw.startsWith("/")) return null;
@@ -25,16 +27,19 @@ function getSafeNextPath(raw: string | null) {
 export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = getSafeNextPath(searchParams.get("next"));
+  const resetSuccess = searchParams.get("reset") === "success";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setMsg(null);
+    setMessage(null);
+    setFieldErrors({});
 
     try {
       const res = await fetch("/api/login", {
@@ -46,13 +51,15 @@ export default function LoginForm() {
       const data = await res.json();
 
       if (!res.ok) {
-        setMsg(data?.error ?? "Login failed");
+        setMessage(data?.error ?? "Login failed.");
+        setFieldErrors((data?.fieldErrors ?? {}) as FieldErrors);
         return;
       }
 
-      router.push(nextPath ?? "/dashboard");
+      router.replace(nextPath ?? "/dashboard");
+      router.refresh();
     } catch {
-      setMsg("Network error");
+      setMessage("Network error. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -96,6 +103,12 @@ export default function LoginForm() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
+            {resetSuccess ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                Your password has been reset. Log in with your new password.
+              </div>
+            ) : null}
+
             <form onSubmit={onSubmit} className="grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="email">Email</Label>
@@ -106,11 +119,23 @@ export default function LoginForm() {
                   onChange={(e) => setEmail(e.target.value)}
                   type="email"
                   autoComplete="email"
+                  aria-invalid={fieldErrors.email ? "true" : "false"}
                 />
+                {fieldErrors.email ? (
+                  <p className="text-sm text-destructive">{fieldErrors.email}</p>
+                ) : null}
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="password">Password</Label>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="password">Password</Label>
+                  <Link
+                    href="/forgot-password"
+                    className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
+                </div>
                 <Input
                   id="password"
                   placeholder="Enter your password"
@@ -118,26 +143,36 @@ export default function LoginForm() {
                   onChange={(e) => setPassword(e.target.value)}
                   type="password"
                   autoComplete="current-password"
+                  aria-invalid={fieldErrors.password ? "true" : "false"}
                 />
+                {fieldErrors.password ? (
+                  <p className="text-sm text-destructive">{fieldErrors.password}</p>
+                ) : null}
               </div>
 
-              {msg ? <p className="text-sm text-destructive">{msg}</p> : null}
+              {message ? <p className="text-sm text-destructive">{message}</p> : null}
 
               <Button disabled={loading} type="submit" className="w-full">
-                {loading ? "Logging in..." : "Login"}
+                {loading ? "Signing in..." : "Login"}
               </Button>
             </form>
 
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
                 New to TaxBook?{" "}
-                <Link href="/signup" className="font-medium text-foreground underline-offset-4 hover:underline">
+                <Link
+                  href="/signup"
+                  className="font-medium text-foreground underline-offset-4 hover:underline"
+                >
                   Start with Free
                 </Link>
               </p>
               <p>
                 Need to compare plans first?{" "}
-                <Link href="/pricing" className="font-medium text-foreground underline-offset-4 hover:underline">
+                <Link
+                  href="/pricing"
+                  className="font-medium text-foreground underline-offset-4 hover:underline"
+                >
                   View pricing
                 </Link>
               </p>

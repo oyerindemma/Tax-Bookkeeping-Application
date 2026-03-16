@@ -2,11 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { FeatureGateCard } from "@/components/billing/feature-gate-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/src/lib/auth";
-import {
-  formatPlanPricePerMonth,
-  getPlanConfig,
-  getWorkspaceFeatureAccess,
-} from "@/src/lib/billing";
+import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import { getActiveWorkspaceMembership } from "@/src/lib/workspaces";
 import AssistantClient from "./_components/AssistantClient";
 
@@ -40,15 +36,13 @@ export default async function AssistantPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">AI accounting assistant</h1>
           <p className="text-muted-foreground">
-            Upgrade this workspace to unlock AI-assisted capture and grounded finance questions.
+            Growth unlocks AI receipt scanning, bookkeeping automation, and assistant workflows.
           </p>
         </div>
         <FeatureGateCard
-          featureName="AI assistant and receipt scanning"
-          featureDescription="Use the workspace assistant, receipt scan, and text-to-record drafting."
-          currentPlanName={getPlanConfig(access.plan).name}
-          requiredPlanName={getPlanConfig(access.requiredPlan).name}
-          requiredPlanPrice={formatPlanPricePerMonth(access.requiredPlan)}
+          feature="AI_ASSISTANT"
+          currentPlan={access.plan}
+          requiredPlan={access.requiredPlan}
         />
       </section>
     );

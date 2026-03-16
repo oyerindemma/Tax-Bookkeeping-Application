@@ -1,49 +1,105 @@
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
-import { prisma } from "@/src/lib/prisma";
 import { seedDefaultExpenseCategories } from "@/src/lib/expense-categories";
+import {
+  buildSessionCookieOptions,
+  createSession,
+  hashPassword,
+  normalizeEmail,
+  normalizeFullName,
+  SESSION_COOKIE_NAME,
+  validateEmail,
+  validateFullName,
+  validatePassword,
+} from "@/src/lib/auth";
 import { logRouteError } from "@/src/lib/logger";
+import { prisma } from "@/src/lib/prisma";
+import {
+  buildWorkspaceCookieOptions,
+  WORKSPACE_COOKIE_NAME,
+} from "@/src/lib/workspaces";
+
 export const runtime = "nodejs";
+
+type SignupBody = {
+  email?: string;
+  password?: string;
+  fullName?: string;
+  confirmPassword?: string;
+};
+
+function buildValidationError(body: SignupBody) {
+  const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
+  const fullName = typeof body.fullName === "string" ? normalizeFullName(body.fullName) : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  const confirmPassword =
+    typeof body.confirmPassword === "string" ? body.confirmPassword : "";
+
+  const fieldErrors: Record<string, string> = {};
+
+  const emailError = validateEmail(email);
+  if (emailError) fieldErrors.email = emailError;
+
+  const nameError = validateFullName(fullName);
+  if (nameError) fieldErrors.fullName = nameError;
+
+  const passwordError = validatePassword(password);
+  if (passwordError) fieldErrors.password = passwordError;
+
+  if (confirmPassword && confirmPassword !== password) {
+    fieldErrors.confirmPassword = "Passwords do not match.";
+  }
+
+  if (!confirmPassword) {
+    fieldErrors.confirmPassword = "Confirm your password.";
+  }
+
+  if (Object.keys(fieldErrors).length === 0) {
+    return null;
+  }
+
+  return {
+    error: "Please correct the highlighted fields.",
+    fieldErrors,
+  };
+}
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { email, password, fullName } = body as {
-      email?: string;
-      password?: string;
-      fullName?: string;
-    };
+    const body = (await req.json()) as SignupBody;
+    const validationError = buildValidationError(body);
 
-    // 1) Validate input
-    if (!email || !password || !fullName) {
-      return NextResponse.json(
-        { error: "email, password, and fullName are required" },
-        { status: 400 }
-      );
+    if (validationError) {
+      return NextResponse.json(validationError, { status: 400 });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const email = normalizeEmail(body.email ?? "");
+    const fullName = normalizeFullName(body.fullName ?? "");
+    const passwordHash = await hashPassword(body.password ?? "");
 
-    // 2) Check if user exists
     const existing = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
+      where: { email },
+      select: { id: true },
     });
 
     if (existing) {
-      return NextResponse.json({ error: "User already exists" }, { status: 409 });
+      return NextResponse.json(
+        {
+          error: "An account already exists for that email. Log in instead.",
+          fieldErrors: {
+            email: "An account already exists for this email address.",
+          },
+        },
+        { status: 409 }
+      );
     }
 
-    // 3) Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const trimmedName = fullName.trim();
-
-    // 4) Create user + default workspace
     const user = await prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
         data: {
-          email: normalizedEmail,
-          password: hashedPassword,
-          fullName: trimmedName,
+          email,
+          password: passwordHash,
+          fullName,
           role: "USER",
         },
         select: {
@@ -57,7 +113,7 @@ export async function POST(req: Request) {
 
       const workspace = await tx.workspace.create({
         data: {
-          name: `${trimmedName}'s Workspace`,
+          name: `${fullName}'s Workspace`,
           members: {
             create: {
               userId: createdUser.id,
@@ -66,23 +122,57 @@ export async function POST(req: Request) {
           },
           subscription: {
             create: {
-              plan: "FREE",
+              plan: "STARTER",
               status: "free",
             },
           },
         },
+        select: { id: true },
       });
 
       await seedDefaultExpenseCategories(tx, workspace.id);
 
-      return createdUser;
+      return {
+        user: createdUser,
+        workspaceId: workspace.id,
+      };
     });
 
-    return NextResponse.json({ user }, { status: 201 });
+    const { token, expiresAt } = await createSession(user.user.id);
+    const res = NextResponse.json(
+      {
+        user: user.user,
+      },
+      { status: 201 }
+    );
+
+    res.cookies.set(SESSION_COOKIE_NAME, token, buildSessionCookieOptions(expiresAt));
+    res.cookies.set(
+      WORKSPACE_COOKIE_NAME,
+      String(user.workspaceId),
+      buildWorkspaceCookieOptions()
+    );
+
+    return res;
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error: "An account already exists for that email. Log in instead.",
+          fieldErrors: {
+            email: "An account already exists for this email address.",
+          },
+        },
+        { status: 409 }
+      );
+    }
+
     logRouteError("signup failed", error);
     return NextResponse.json(
-      { error: "Server error creating user" },
+      { error: "We could not create your account right now. Please try again." },
       { status: 500 }
     );
   }

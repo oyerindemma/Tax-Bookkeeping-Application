@@ -28,6 +28,7 @@ type WorkspaceMembershipWithDetails = Prisma.WorkspaceMemberGetPayload<{
   include: {
     workspace: {
       include: {
+        businessProfile: true;
         subscription: true;
         _count: {
           select: {
@@ -47,6 +48,8 @@ export type UserWorkspaceSummary = {
   role: WorkspaceRole;
   archivedAt: Date | null;
   createdAt: Date;
+  businessName: string | null;
+  onboardingComplete: boolean;
   membersCount: number;
   invoicesCount: number;
   taxRecordsCount: number;
@@ -61,6 +64,10 @@ function mapWorkspaceSummary(membership: WorkspaceMembershipWithDetails): UserWo
     role: membership.role,
     archivedAt: membership.workspace.archivedAt,
     createdAt: membership.workspace.createdAt,
+    businessName: membership.workspace.businessProfile?.businessName ?? null,
+    onboardingComplete: Boolean(
+      membership.workspace.businessProfile?.onboardingCompletedAt
+    ),
     membersCount: membership.workspace._count.members,
     invoicesCount: membership.workspace._count.invoices,
     taxRecordsCount: membership.workspace._count.taxRecords,
@@ -88,6 +95,7 @@ export async function listUserWorkspaceSummaries(userId: number) {
     include: {
       workspace: {
         include: {
+          businessProfile: true,
           subscription: true,
           _count: {
             select: {
@@ -118,6 +126,7 @@ export async function getUserWorkspaceSummary(userId: number, workspaceId: numbe
     include: {
       workspace: {
         include: {
+          businessProfile: true,
           subscription: true,
           _count: {
             select: {
@@ -168,7 +177,13 @@ export async function getActiveWorkspaceMembership(userId: number) {
           archivedAt: null,
         },
       },
-      include: { workspace: true },
+      include: {
+        workspace: {
+          include: {
+            businessProfile: true,
+          },
+        },
+      },
     });
     if (membership) return membership;
   }
@@ -180,7 +195,29 @@ export async function getActiveWorkspaceMembership(userId: number) {
         archivedAt: null,
       },
     },
-    include: { workspace: true },
+    include: {
+      workspace: {
+        include: {
+          businessProfile: true,
+        },
+      },
+    },
     orderBy: { workspace: { name: "asc" } },
   });
+}
+
+export function isWorkspaceOnboardingComplete(
+  membership: Awaited<ReturnType<typeof getActiveWorkspaceMembership>>
+) {
+  return Boolean(membership?.workspace.businessProfile?.onboardingCompletedAt);
+}
+
+export async function getAuthenticatedWorkspaceRedirectPath(userId: number) {
+  const membership = await getActiveWorkspaceMembership(userId);
+
+  if (!membership) {
+    return "/dashboard/workspaces";
+  }
+
+  return isWorkspaceOnboardingComplete(membership) ? "/dashboard" : "/onboarding";
 }

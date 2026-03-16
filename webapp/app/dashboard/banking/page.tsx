@@ -1,13 +1,9 @@
+import { redirect } from "next/navigation";
 import { FeatureGateCard } from "@/components/billing/feature-gate-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/src/lib/auth";
-import {
-  formatPlanPricePerMonth,
-  getPlanConfig,
-  getWorkspaceFeatureAccess,
-} from "@/src/lib/billing";
+import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import { getActiveWorkspaceMembership } from "@/src/lib/workspaces";
-import BankingClient from "./_components/BankingClient";
 
 export default async function BankingPage() {
   const user = await requireUser();
@@ -37,19 +33,17 @@ export default async function BankingPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Banking</h1>
           <p className="text-muted-foreground">
-            Banking imports and reconciliation are available on Business and Accountant.
+            Banking imports and reconciliation are available from Professional upward.
           </p>
         </div>
         <FeatureGateCard
-          featureName="Banking and reconciliation"
-          featureDescription="Connect bank accounts, import statements, and reconcile transaction activity."
-          currentPlanName={getPlanConfig(access.plan).name}
-          requiredPlanName={getPlanConfig(access.requiredPlan).name}
-          requiredPlanPrice={formatPlanPricePerMonth(access.requiredPlan)}
+          feature="BANKING"
+          currentPlan={access.plan}
+          requiredPlan={access.requiredPlan}
         />
       </section>
     );
   }
 
-  return <BankingClient role={membership.role} />;
+  redirect("/dashboard/banking/reconcile");
 }

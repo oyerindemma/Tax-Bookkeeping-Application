@@ -13,6 +13,17 @@ const DEFAULT_EXPENSE_CATEGORIES = [
   "Miscellaneous",
 ];
 
+const DEFAULT_CLIENT_BUSINESS_CATEGORIES = [
+  { name: "Revenue", type: "INCOME" },
+  { name: "Cost of sales", type: "EXPENSE" },
+  { name: "Operations", type: "EXPENSE" },
+  { name: "Payroll", type: "EXPENSE" },
+  { name: "Rent and utilities", type: "EXPENSE" },
+  { name: "Professional fees", type: "EXPENSE" },
+  { name: "Tax and compliance", type: "EXPENSE" },
+  { name: "Travel and logistics", type: "EXPENSE" },
+];
+
 const DEMO_EMAIL = process.env.DEMO_EMAIL || "demo@taxbook.app";
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD || "DemoPass123!";
 const DEMO_NAME = process.env.DEMO_NAME || "TaxBook Demo";
@@ -67,6 +78,69 @@ async function ensureDefaultCategories(workspaceId) {
   });
 }
 
+async function findOrCreateClientBusiness(workspaceId) {
+  const existing = await prisma.clientBusiness.findFirst({
+    where: {
+      workspaceId,
+      name: "Acme Nigeria Services",
+    },
+  });
+
+  if (existing) {
+    return prisma.clientBusiness.update({
+      where: { id: existing.id },
+      data: {
+        legalName: "Acme Nigeria Services Ltd",
+        industry: "Professional services",
+        country: "Nigeria",
+        state: "Lagos",
+        taxIdentificationNumber: "TIN-CB-DEMO-001",
+        vatRegistrationNumber: "VAT-DEMO-001",
+        defaultCurrency: "NGN",
+        notes: "Demo client business for banking reconciliation walkthroughs.",
+        archivedAt: null,
+      },
+    });
+  }
+
+  return prisma.clientBusiness.create({
+    data: {
+      workspaceId,
+      name: "Acme Nigeria Services",
+      legalName: "Acme Nigeria Services Ltd",
+      industry: "Professional services",
+      country: "Nigeria",
+      state: "Lagos",
+      taxIdentificationNumber: "TIN-CB-DEMO-001",
+      vatRegistrationNumber: "VAT-DEMO-001",
+      defaultCurrency: "NGN",
+      notes: "Demo client business for banking reconciliation walkthroughs.",
+    },
+  });
+}
+
+async function ensureClientBusinessCategories(clientBusinessId) {
+  const existing = await prisma.transactionCategory.findMany({
+    where: { clientBusinessId },
+    select: { name: true },
+  });
+
+  const existingNames = new Set(existing.map((item) => item.name.trim().toLowerCase()));
+  const missing = DEFAULT_CLIENT_BUSINESS_CATEGORIES.filter(
+    (category) => !existingNames.has(category.name.toLowerCase())
+  );
+
+  for (const category of missing) {
+    await prisma.transactionCategory.create({
+      data: {
+        clientBusinessId,
+        name: category.name,
+        type: category.type,
+      },
+    });
+  }
+}
+
 async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
 
@@ -104,17 +178,19 @@ async function main() {
   await prisma.workspaceSubscription.upsert({
     where: { workspaceId: workspace.id },
     update: {
-      plan: "BUSINESS",
+      plan: "PROFESSIONAL",
       status: "active",
     },
     create: {
       workspaceId: workspace.id,
-      plan: "BUSINESS",
+      plan: "PROFESSIONAL",
       status: "active",
     },
   });
 
   await ensureDefaultCategories(workspace.id);
+  const clientBusiness = await findOrCreateClientBusiness(workspace.id);
+  await ensureClientBusinessCategories(clientBusiness.id);
 
   const existingClient = await prisma.client.findFirst({
     where: {
@@ -151,6 +227,9 @@ async function main() {
 
   const softwareCategory = await prisma.expenseCategory.findFirst({
     where: { workspaceId: workspace.id, name: "Software" },
+  });
+  const operationsCategory = await prisma.transactionCategory.findFirst({
+    where: { clientBusinessId: clientBusiness.id, name: "Operations" },
   });
 
   const invoice = await prisma.invoice.upsert({
@@ -325,6 +404,72 @@ async function main() {
     });
   }
 
+  const adobeVendor = await prisma.vendor.upsert({
+    where: {
+      clientBusinessId_name: {
+        clientBusinessId: clientBusiness.id,
+        name: "Adobe",
+      },
+    },
+    update: {},
+    create: {
+      clientBusinessId: clientBusiness.id,
+      name: "Adobe",
+    },
+  });
+
+  const demoLedgerTransaction = await prisma.ledgerTransaction.findFirst({
+    where: {
+      clientBusinessId: clientBusiness.id,
+      reference: "DEMO-EXP-9001",
+    },
+  });
+
+  if (demoLedgerTransaction) {
+    await prisma.ledgerTransaction.update({
+      where: { id: demoLedgerTransaction.id },
+      data: {
+        vendorId: adobeVendor.id,
+        categoryId: operationsCategory?.id ?? null,
+        transactionDate: new Date("2026-03-09T00:00:00.000Z"),
+        description: "Adobe Creative Cloud",
+        reference: "DEMO-EXP-9001",
+        direction: "MONEY_OUT",
+        amountMinor: 500000,
+        currency: "NGN",
+        vatAmountMinor: 37500,
+        whtAmountMinor: 0,
+        vatTreatment: "INPUT",
+        whtTreatment: "NONE",
+        origin: "MANUAL",
+        reviewStatus: "POSTED",
+        notes: "Seeded ledger transaction for reconciliation testing.",
+      },
+    });
+  } else {
+    await prisma.ledgerTransaction.create({
+      data: {
+        clientBusinessId: clientBusiness.id,
+        vendorId: adobeVendor.id,
+        categoryId: operationsCategory?.id ?? null,
+        createdByUserId: user.id,
+        transactionDate: new Date("2026-03-09T00:00:00.000Z"),
+        description: "Adobe Creative Cloud",
+        reference: "DEMO-EXP-9001",
+        direction: "MONEY_OUT",
+        amountMinor: 500000,
+        currency: "NGN",
+        vatAmountMinor: 37500,
+        whtAmountMinor: 0,
+        vatTreatment: "INPUT",
+        whtTreatment: "NONE",
+        origin: "MANUAL",
+        reviewStatus: "POSTED",
+        notes: "Seeded ledger transaction for reconciliation testing.",
+      },
+    });
+  }
+
   const existingBankAccount = await prisma.bankAccount.findFirst({
     where: {
       workspaceId: workspace.id,
@@ -336,6 +481,7 @@ async function main() {
     ? await prisma.bankAccount.update({
         where: { id: existingBankAccount.id },
         data: {
+          clientBusinessId: clientBusiness.id,
           name: "Demo Operating Account",
           bankName: "TaxBook Bank",
           currency: "NGN",
@@ -344,6 +490,7 @@ async function main() {
     : await prisma.bankAccount.create({
         data: {
           workspaceId: workspace.id,
+          clientBusinessId: clientBusiness.id,
           name: "Demo Operating Account",
           bankName: "TaxBook Bank",
           accountNumber: "0001234567",
@@ -351,39 +498,84 @@ async function main() {
         },
       });
 
-  const existingBankTransaction = await prisma.bankTransaction.findFirst({
+  await prisma.reconciliationMatch.deleteMany({
     where: {
       workspaceId: workspace.id,
-      reference: "DEMO-EXP-9001",
+      bankTransaction: {
+        bankAccountId: bankAccount.id,
+      },
+    },
+  });
+  await prisma.bankTransaction.deleteMany({
+    where: {
+      workspaceId: workspace.id,
+      bankAccountId: bankAccount.id,
+    },
+  });
+  await prisma.bankStatementImport.deleteMany({
+    where: {
+      workspaceId: workspace.id,
+      bankAccountId: bankAccount.id,
     },
   });
 
-  if (existingBankTransaction) {
-    await prisma.bankTransaction.update({
-      where: { id: existingBankTransaction.id },
-      data: {
-        bankAccountId: bankAccount.id,
-        transactionDate: new Date("2026-03-09T00:00:00.000Z"),
-        description: "Adobe debit",
-        amount: 500000,
-        type: "DEBIT",
-        status: "UNMATCHED",
-      },
-    });
-  } else {
-    await prisma.bankTransaction.create({
-      data: {
-        workspaceId: workspace.id,
-        bankAccountId: bankAccount.id,
-        transactionDate: new Date("2026-03-09T00:00:00.000Z"),
-        description: "Adobe debit",
-        reference: "DEMO-EXP-9001",
-        amount: 500000,
-        type: "DEBIT",
-        status: "UNMATCHED",
-      },
-    });
-  }
+  const existingUpload = await prisma.bookkeepingUpload.findFirst({
+    where: {
+      clientBusinessId: clientBusiness.id,
+      fileName: "demo-office-internet.pdf",
+    },
+  });
+
+  const internetUpload = existingUpload
+    ? await prisma.bookkeepingUpload.update({
+        where: { id: existingUpload.id },
+        data: {
+          uploadedByUserId: user.id,
+          sourceType: "BANK_STATEMENT",
+          status: "READY_FOR_REVIEW",
+          reviewNotes: "Seeded draft used by banking reconciliation tests.",
+          rawText: "Office internet subscription payment to MTN Business NGN 750.00",
+        },
+      })
+    : await prisma.bookkeepingUpload.create({
+        data: {
+          clientBusinessId: clientBusiness.id,
+          uploadedByUserId: user.id,
+          fileName: "demo-office-internet.pdf",
+          fileType: "application/pdf",
+          sourceType: "BANK_STATEMENT",
+          status: "READY_FOR_REVIEW",
+          reviewNotes: "Seeded draft used by banking reconciliation tests.",
+          rawText: "Office internet subscription payment to MTN Business NGN 750.00",
+        },
+      });
+
+  await prisma.bookkeepingDraft.deleteMany({
+    where: {
+      uploadId: internetUpload.id,
+    },
+  });
+  await prisma.bookkeepingDraft.create({
+    data: {
+      uploadId: internetUpload.id,
+      proposedDate: new Date("2026-03-12T00:00:00.000Z"),
+      description: "Office internet subscription",
+      reference: "DEMO-UTIL-1002",
+      vendorName: "MTN Business",
+      suggestedCategoryName: "Operations",
+      direction: "MONEY_OUT",
+      amountMinor: 75000,
+      taxAmountMinor: 0,
+      currency: "NGN",
+      vatAmountMinor: 0,
+      whtAmountMinor: 0,
+      vatTreatment: "NONE",
+      whtTreatment: "NONE",
+      confidence: 0.71,
+      reviewStatus: "PENDING",
+      reviewerNote: "Seeded pending draft for bank-match suggestions.",
+    },
+  });
 
   console.log("Demo seed ready");
   console.log(`Email: ${DEMO_EMAIL.toLowerCase()}`);

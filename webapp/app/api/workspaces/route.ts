@@ -60,7 +60,7 @@ export async function POST(req: Request) {
           },
           subscription: {
             create: {
-              plan: "FREE",
+              plan: "STARTER",
               status: "free",
             },
           },
@@ -91,8 +91,8 @@ export async function POST(req: Request) {
           membersCount: 1,
           invoicesCount: 0,
           taxRecordsCount: 0,
-          plan: "FREE",
-          subscriptionLabel: "Free",
+          plan: "STARTER",
+          subscriptionLabel: "Starter",
         },
     });
     res.cookies.set(

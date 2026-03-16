@@ -1,18 +1,37 @@
 import "server-only";
 
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { prisma } from "@/src/lib/prisma";
-import type { WorkspaceRole } from "@prisma/client";
+import type { Prisma, WorkspaceRole } from "@prisma/client";
 import {
   SESSION_COOKIE_NAME,
   SESSION_TTL_DAYS,
   SESSION_MAX_AGE_SECONDS,
 } from "@/src/lib/session-constants";
+import { getAppUrl } from "@/src/lib/env";
+import { prisma } from "@/src/lib/prisma";
 import { WORKSPACE_COOKIE_NAME } from "@/src/lib/workspaces";
 
 export { SESSION_COOKIE_NAME, SESSION_TTL_DAYS, SESSION_MAX_AGE_SECONDS };
+
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_RESET_TOKEN_TTL_MINUTES = 60;
+
+const PASSWORD_HASH_ROUNDS = 12;
+
+const SESSION_USER_SELECT = {
+  id: true,
+  email: true,
+  fullName: true,
+  role: true,
+  createdAt: true,
+} satisfies Prisma.UserSelect;
+
+export type SessionUser = Prisma.UserGetPayload<{
+  select: typeof SESSION_USER_SELECT;
+}>;
 
 export function buildSessionCookieOptions(expiresAt?: Date) {
   return {
@@ -29,8 +48,72 @@ function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function generateToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+export function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+export function normalizeFullName(fullName: string) {
+  return fullName.trim().replace(/\s+/g, " ");
+}
+
+export function validateEmail(email: string) {
+  if (!email) {
+    return "Enter your email address.";
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return "Enter a valid email address.";
+  }
+
+  return null;
+}
+
+export function validateFullName(fullName: string) {
+  if (!fullName) {
+    return "Enter your full name.";
+  }
+
+  if (fullName.length < 2) {
+    return "Full name must be at least 2 characters.";
+  }
+
+  if (fullName.length > 80) {
+    return "Full name must be 80 characters or fewer.";
+  }
+
+  return null;
+}
+
+export function validatePassword(password: string) {
+  if (!password) {
+    return "Enter your password.";
+  }
+
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `Use at least ${PASSWORD_MIN_LENGTH} characters.`;
+  }
+
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return "Include at least one letter and one number.";
+  }
+
+  return null;
+}
+
+export async function hashPassword(password: string) {
+  return bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
+}
+
+export async function verifyPassword(password: string, passwordHash: string) {
+  return bcrypt.compare(password, passwordHash);
+}
+
 export async function createSession(userId: number) {
-  const token = crypto.randomBytes(32).toString("hex");
+  const token = generateToken();
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
 
@@ -45,6 +128,10 @@ export async function createSession(userId: number) {
   return { token, expiresAt };
 }
 
+export async function deleteUserSessions(userId: number) {
+  await prisma.session.deleteMany({ where: { userId } });
+}
+
 export async function deleteSessionByToken(token: string) {
   const tokenHash = hashToken(token);
   await prisma.session.deleteMany({ where: { tokenHash } });
@@ -56,7 +143,11 @@ export async function getSessionByToken(token?: string) {
   const tokenHash = hashToken(token);
   const session = await prisma.session.findUnique({
     where: { tokenHash },
-    include: { user: true },
+    include: {
+      user: {
+        select: SESSION_USER_SELECT,
+      },
+    },
   });
 
   if (!session) return null;
@@ -80,12 +171,210 @@ export async function getUserFromSession() {
   return session?.user ?? null;
 }
 
+export async function redirectIfAuthenticated(pathname = "/dashboard") {
+  const user = await getUserFromSession();
+  if (user) {
+    redirect(pathname);
+  }
+}
+
 export async function requireUser() {
   const user = await getUserFromSession();
   if (!user) {
     redirect("/login");
   }
   return user;
+}
+
+export async function createPasswordResetToken(userId: number) {
+  const token = generateToken();
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(
+    Date.now() + PASSWORD_RESET_TOKEN_TTL_MINUTES * 60 * 1000
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.passwordResetToken.deleteMany({
+      where: { userId },
+    });
+
+    await tx.passwordResetToken.create({
+      data: {
+        tokenHash,
+        userId,
+        expiresAt,
+      },
+    });
+  });
+
+  return { token, expiresAt };
+}
+
+type PasswordResetTokenValidation =
+  | { ok: true; userId: number; expiresAt: Date }
+  | { ok: false; status: number; error: string };
+
+export async function validatePasswordResetToken(
+  token?: string
+): Promise<PasswordResetTokenValidation> {
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) {
+    return {
+      ok: false,
+      status: 400,
+      error: "This password reset link is missing. Request a new one.",
+    };
+  }
+
+  const tokenHash = hashToken(trimmedToken);
+  const resetToken = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    select: {
+      id: true,
+      userId: true,
+      expiresAt: true,
+      usedAt: true,
+    },
+  });
+
+  if (!resetToken) {
+    return {
+      ok: false,
+      status: 400,
+      error: "This password reset link is invalid. Request a new one.",
+    };
+  }
+
+  if (resetToken.usedAt) {
+    return {
+      ok: false,
+      status: 400,
+      error: "This password reset link has already been used. Request a new one.",
+    };
+  }
+
+  if (resetToken.expiresAt.getTime() <= Date.now()) {
+    await prisma.passwordResetToken.deleteMany({
+      where: { id: resetToken.id },
+    });
+
+    return {
+      ok: false,
+      status: 410,
+      error: "This password reset link has expired. Request a new one.",
+    };
+  }
+
+  return {
+    ok: true,
+    userId: resetToken.userId,
+    expiresAt: resetToken.expiresAt,
+  };
+}
+
+type ResetPasswordResult =
+  | { ok: true }
+  | { ok: false; status: number; error: string };
+
+export async function resetPasswordWithToken(
+  token: string,
+  password: string
+): Promise<ResetPasswordResult> {
+  const trimmedToken = token.trim();
+  if (!trimmedToken) {
+    return {
+      ok: false,
+      status: 400,
+      error: "This password reset link is invalid. Request a new one.",
+    };
+  }
+
+  const passwordHash = await hashPassword(password);
+  const tokenHash = hashToken(trimmedToken);
+
+  return prisma.$transaction(async (tx) => {
+    const resetToken = await tx.passwordResetToken.findUnique({
+      where: { tokenHash },
+      select: {
+        id: true,
+        userId: true,
+        expiresAt: true,
+        usedAt: true,
+      },
+    });
+
+    if (!resetToken) {
+      return {
+        ok: false,
+        status: 400,
+        error: "This password reset link is invalid. Request a new one.",
+      } satisfies ResetPasswordResult;
+    }
+
+    if (resetToken.usedAt) {
+      return {
+        ok: false,
+        status: 400,
+        error: "This password reset link has already been used. Request a new one.",
+      } satisfies ResetPasswordResult;
+    }
+
+    if (resetToken.expiresAt.getTime() <= Date.now()) {
+      await tx.passwordResetToken.deleteMany({
+        where: { id: resetToken.id },
+      });
+
+      return {
+        ok: false,
+        status: 410,
+        error: "This password reset link has expired. Request a new one.",
+      } satisfies ResetPasswordResult;
+    }
+
+    const consumed = await tx.passwordResetToken.updateMany({
+      where: {
+        id: resetToken.id,
+        usedAt: null,
+      },
+      data: {
+        usedAt: new Date(),
+      },
+    });
+
+    if (consumed.count !== 1) {
+      return {
+        ok: false,
+        status: 409,
+        error: "This password reset link is no longer valid. Request a new one.",
+      } satisfies ResetPasswordResult;
+    }
+
+    await tx.user.update({
+      where: { id: resetToken.userId },
+      data: { password: passwordHash },
+    });
+
+    await tx.passwordResetToken.deleteMany({
+      where: {
+        userId: resetToken.userId,
+        id: {
+          not: resetToken.id,
+        },
+      },
+    });
+
+    await tx.session.deleteMany({
+      where: { userId: resetToken.userId },
+    });
+
+    return { ok: true } satisfies ResetPasswordResult;
+  });
+}
+
+export function buildPasswordResetUrl(token: string) {
+  const url = new URL("/reset-password", getAppUrl());
+  url.searchParams.set("token", token);
+  return url.toString();
 }
 
 export async function getAuthContext() {

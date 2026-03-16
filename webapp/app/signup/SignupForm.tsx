@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,36 +15,54 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+type FieldErrors = Partial<
+  Record<"fullName" | "email" | "password" | "confirmPassword", string>
+>;
+
+function getSafeNextPath(raw: string | null) {
+  if (!raw) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//")) return null;
+  return raw;
+}
+
 export default function SignupForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [loading, setLoading] = useState(false);
+  const nextPath = getSafeNextPath(searchParams.get("next"));
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setMsg(null);
+    setMessage(null);
+    setFieldErrors({});
 
     try {
       const res = await fetch("/api/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fullName, email, password }),
+        body: JSON.stringify({ fullName, email, password, confirmPassword }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        setMsg(data?.error ?? "Signup failed");
+        setMessage(data?.error ?? "Signup failed.");
+        setFieldErrors((data?.fieldErrors ?? {}) as FieldErrors);
         return;
       }
 
-      router.push("/login");
+      router.replace(nextPath ?? "/dashboard");
+      router.refresh();
     } catch {
-      setMsg("Network error");
+      setMessage("Network error. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -84,7 +102,7 @@ export default function SignupForm() {
           <CardHeader>
             <CardTitle>Create account</CardTitle>
             <CardDescription>
-              Set up your account and continue into the TaxBook onboarding flow.
+              Set up your account and continue into your TaxBook workspace.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -97,7 +115,11 @@ export default function SignupForm() {
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   autoComplete="name"
+                  aria-invalid={fieldErrors.fullName ? "true" : "false"}
                 />
+                {fieldErrors.fullName ? (
+                  <p className="text-sm text-destructive">{fieldErrors.fullName}</p>
+                ) : null}
               </div>
 
               <div className="grid gap-2">
@@ -109,7 +131,11 @@ export default function SignupForm() {
                   onChange={(e) => setEmail(e.target.value)}
                   type="email"
                   autoComplete="email"
+                  aria-invalid={fieldErrors.email ? "true" : "false"}
                 />
+                {fieldErrors.email ? (
+                  <p className="text-sm text-destructive">{fieldErrors.email}</p>
+                ) : null}
               </div>
 
               <div className="grid gap-2">
@@ -121,10 +147,33 @@ export default function SignupForm() {
                   onChange={(e) => setPassword(e.target.value)}
                   type="password"
                   autoComplete="new-password"
+                  aria-invalid={fieldErrors.password ? "true" : "false"}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Use at least 8 characters with one letter and one number.
+                </p>
+                {fieldErrors.password ? (
+                  <p className="text-sm text-destructive">{fieldErrors.password}</p>
+                ) : null}
               </div>
 
-              {msg ? <p className="text-sm text-destructive">{msg}</p> : null}
+              <div className="grid gap-2">
+                <Label htmlFor="confirmPassword">Confirm password</Label>
+                <Input
+                  id="confirmPassword"
+                  placeholder="Re-enter your password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  type="password"
+                  autoComplete="new-password"
+                  aria-invalid={fieldErrors.confirmPassword ? "true" : "false"}
+                />
+                {fieldErrors.confirmPassword ? (
+                  <p className="text-sm text-destructive">{fieldErrors.confirmPassword}</p>
+                ) : null}
+              </div>
+
+              {message ? <p className="text-sm text-destructive">{message}</p> : null}
 
               <Button disabled={loading} type="submit" className="w-full">
                 {loading ? "Creating account..." : "Create account"}
@@ -134,13 +183,19 @@ export default function SignupForm() {
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
                 Already have an account?{" "}
-                <Link href="/login" className="font-medium text-foreground underline-offset-4 hover:underline">
+                <Link
+                  href="/login"
+                  className="font-medium text-foreground underline-offset-4 hover:underline"
+                >
                   Login
                 </Link>
               </p>
               <p>
                 Need to review plan fit first?{" "}
-                <Link href="/pricing" className="font-medium text-foreground underline-offset-4 hover:underline">
+                <Link
+                  href="/pricing"
+                  className="font-medium text-foreground underline-offset-4 hover:underline"
+                >
                   View pricing
                 </Link>
               </p>

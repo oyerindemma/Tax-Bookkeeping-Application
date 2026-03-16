@@ -5,13 +5,16 @@ loadDotEnv();
 const allowedProviders = new Set(["sqlite", "postgresql"]);
 
 const databaseUrl = (process.env.DATABASE_URL || "").trim();
-const explicitProvider = (process.env.DATABASE_PROVIDER || "").trim().toLowerCase();
 const provider = resolveDatabaseProvider(process.env);
 const directUrl = (process.env.DIRECT_URL || "").trim();
 const appUrl = (process.env.APP_URL || "http://localhost:3000").trim();
 
 const errors = [];
 const warnings = [];
+
+function hasAnyEnv(names) {
+  return names.some((name) => Boolean(process.env[name]));
+}
 
 if (!allowedProviders.has(provider)) {
   errors.push("DATABASE_PROVIDER must be sqlite or postgresql");
@@ -52,16 +55,36 @@ if (!process.env.PAYSTACK_SECRET_KEY) {
   warnings.push("PAYSTACK_SECRET_KEY is not set; billing checkout will be unavailable");
 }
 
-if (!process.env.PAYSTACK_PLAN_GROWTH) {
-  warnings.push("PAYSTACK_PLAN_GROWTH is not set; Growth checkout will be unavailable");
+if (!process.env.PAYSTACK_WEBHOOK_SECRET) {
+  warnings.push(
+    "PAYSTACK_WEBHOOK_SECRET is not set; webhook signature verification will fall back to PAYSTACK_SECRET_KEY"
+  );
 }
 
-if (!process.env.PAYSTACK_PLAN_BUSINESS) {
-  warnings.push("PAYSTACK_PLAN_BUSINESS is not set; Business checkout will be unavailable");
+if (!hasAnyEnv(["PAYSTACK_PLAN_GROWTH"])) {
+  warnings.push("PAYSTACK_PLAN_GROWTH is not set; Growth monthly checkout will be unavailable");
 }
 
-if (!process.env.PAYSTACK_PLAN_ACCOUNTANT) {
-  warnings.push("PAYSTACK_PLAN_ACCOUNTANT is not set; Accountant checkout will be unavailable");
+if (!hasAnyEnv(["PAYSTACK_PLAN_GROWTH_ANNUAL"])) {
+  warnings.push("PAYSTACK_PLAN_GROWTH_ANNUAL is not set; Growth annual checkout will be unavailable");
+}
+
+if (!hasAnyEnv(["PAYSTACK_PLAN_PROFESSIONAL", "PAYSTACK_PLAN_BUSINESS"])) {
+  warnings.push(
+    "PAYSTACK_PLAN_PROFESSIONAL or PAYSTACK_PLAN_BUSINESS is not set; Professional monthly checkout will be unavailable"
+  );
+}
+
+if (!hasAnyEnv(["PAYSTACK_PLAN_PROFESSIONAL_ANNUAL", "PAYSTACK_PLAN_BUSINESS_ANNUAL"])) {
+  warnings.push(
+    "PAYSTACK_PLAN_PROFESSIONAL_ANNUAL or PAYSTACK_PLAN_BUSINESS_ANNUAL is not set; Professional annual checkout will be unavailable"
+  );
+}
+
+if (!hasAnyEnv(["PAYSTACK_PLAN_ENTERPRISE", "PAYSTACK_PLAN_ACCOUNTANT"])) {
+  warnings.push(
+    "PAYSTACK_PLAN_ENTERPRISE is not set; Enterprise checkout automation remains unavailable and sales-led"
+  );
 }
 
 console.log(

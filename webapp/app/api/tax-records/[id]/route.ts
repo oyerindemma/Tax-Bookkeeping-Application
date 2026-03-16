@@ -3,6 +3,7 @@ import { prisma } from "@/src/lib/prisma";
 import { getAuthContext, requireRoleAtLeast } from "@/src/lib/auth";
 import { logAudit } from "@/src/lib/audit";
 import { logRouteError } from "@/src/lib/logger";
+import { serializeTaxRecordAiMetadata } from "@/src/lib/tax-record-ai";
 
 export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ id?: string }> };
@@ -97,6 +98,7 @@ export async function PUT(
       categoryId,
       vendorName,
       recurring,
+      aiMetadata,
     } = body as {
       kind?: string;
       amountKobo?: number;
@@ -107,6 +109,7 @@ export async function PUT(
       categoryId?: number | string;
       vendorName?: string;
       recurring?: boolean;
+      aiMetadata?: unknown;
     };
 
     if (!kind || amountKobo === undefined || amountKobo === null || !occurredOn) {
@@ -179,6 +182,31 @@ export async function PUT(
 
     const amountKoboRounded = Math.max(0, Math.round(parsedAmount));
     const computed = computeTax(amountKoboRounded, parsedRate);
+    let normalizedAiMetadata = existing.aiMetadata;
+    let source = existing.source;
+
+    try {
+      const serializedAi = serializeTaxRecordAiMetadata(aiMetadata, ctx.userId);
+      if (serializedAi.serialized !== undefined) {
+        normalizedAiMetadata = serializedAi.serialized;
+      }
+      if (serializedAi.source !== undefined && serializedAi.source !== null) {
+        source = serializedAi.source;
+      }
+      if (serializedAi.serialized === null && source?.startsWith("ai_")) {
+        source = null;
+      }
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Invalid aiMetadata payload",
+        },
+        { status: 400 }
+      );
+    }
 
     const record = await prisma.taxRecord.update({
       where: { id: recordId },
@@ -191,6 +219,8 @@ export async function PUT(
         currency: currency?.trim().toUpperCase() || existing.currency,
         occurredOn: parsedDate,
         description: description?.trim() || null,
+        source,
+        aiMetadata: normalizedAiMetadata,
         categoryId: parsedCategoryId,
         vendorName:
           vendorName !== undefined ? vendorName?.trim() || null : existing.vendorName,
@@ -207,6 +237,8 @@ export async function PUT(
         categoryId: record.categoryId,
         vendorName: record.vendorName,
         recurring: record.recurring,
+        source: record.source,
+        hasAiMetadata: Boolean(record.aiMetadata),
       },
     });
 

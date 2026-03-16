@@ -187,7 +187,7 @@ export default function ContactPage() {
                 Start with the product, then come back when you need rollout support.
               </h2>
               <p className="max-w-2xl text-muted-foreground">
-                You can self-serve into the Free plan, review pricing, or log in if you already
+                You can self-serve into Starter, review pricing, or log in if you already
                 have access.
               </p>
             </div>

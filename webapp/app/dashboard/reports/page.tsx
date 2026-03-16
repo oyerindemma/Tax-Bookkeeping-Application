@@ -68,17 +68,22 @@ export default async function ReportsPage({
 
   return (
     <section className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold">Reports</h1>
-        <p className="text-muted-foreground">
-          Workspace:{" "}
-          <span className="font-medium text-foreground">
-            {membership.workspace.name}
-          </span>
-        </p>
-        <p className="text-muted-foreground">
-          Filter by date range and export your tax activity.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold">Reports</h1>
+          <p className="text-muted-foreground">
+            Workspace:{" "}
+            <span className="font-medium text-foreground">
+              {membership.workspace.name}
+            </span>
+          </p>
+          <p className="text-muted-foreground">
+            Filter by date range and export your tax activity.
+          </p>
+        </div>
+        <Button asChild variant="outline">
+          <Link href="/dashboard/tax-filing">Open tax compliance</Link>
+        </Button>
       </div>
 
       <Card>

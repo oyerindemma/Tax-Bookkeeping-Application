@@ -8,17 +8,25 @@ generator client {
 }
 
 model User {
-  id           Int              @id @default(autoincrement())
-  email        String           @unique
-  password     String
-  fullName     String
-  role         String           @default("USER")
-  createdAt    DateTime         @default(now())
-  sessions     Session[]
-  workspaces   WorkspaceMember[]
-  taxRecords   TaxRecord[]
-  auditLogs    AuditLog[]       @relation("AuditActor")
-  auditTargets AuditLog[]       @relation("AuditTarget")
+  id                  Int                  @id @default(autoincrement())
+  email               String               @unique
+  password            String
+  fullName            String
+  role                String               @default("USER")
+  createdAt           DateTime             @default(now())
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  workspaces          WorkspaceMember[]
+  taxRecords          TaxRecord[]
+  auditLogs           AuditLog[]           @relation("AuditActor")
+  auditTargets        AuditLog[]           @relation("AuditTarget")
+  bookkeepingUploads  BookkeepingUpload[]  @relation("BookkeepingUploadActor")
+  bankStatementImports BankStatementImport[] @relation("BankStatementImportActor")
+  importedBankTransactions BankTransaction[] @relation("BankTransactionActor")
+  ledgerTransactions  LedgerTransaction[]  @relation("LedgerTransactionActor")
+  approvedReconciliationMatches ReconciliationMatch[] @relation("ReconciliationMatchApprover")
+  createdBankTransactionSplitLines BankTransactionSplitLine[] @relation("BankTransactionSplitActor")
+  reviewedBookkeepingDrafts BookkeepingDraft[] @relation("BookkeepingDraftReviewer")
 }
 
 model Workspace {
@@ -26,6 +34,7 @@ model Workspace {
   name                  String
   createdAt             DateTime                @default(now())
   archivedAt            DateTime?
+  businessProfile       BusinessProfile?
   members               WorkspaceMember[]
   taxRecords            TaxRecord[]
   invites               Invite[]
@@ -35,11 +44,32 @@ model Workspace {
   invoices              Invoice[]
   recurringInvoices     RecurringInvoice[]
   bankAccounts          BankAccount[]
+  bankStatementImports  BankStatementImport[]
   bankTransactions      BankTransaction[]
   reconciliationMatches ReconciliationMatch[]
   expenseCategories     ExpenseCategory[]
+  clientBusinesses      ClientBusiness[]
 
   @@index([archivedAt])
+}
+
+model BusinessProfile {
+  id                      Int      @id @default(autoincrement())
+  workspaceId             Int      @unique
+  businessName            String
+  businessType            String
+  industry                String
+  country                 String
+  state                   String
+  taxIdentificationNumber String?
+  defaultCurrency         String   @default("NGN")
+  fiscalYearStartMonth    Int      @default(1)
+  onboardingCompletedAt   DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  workspace               Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([onboardingCompletedAt])
 }
 
 model WorkspaceMember {
@@ -64,10 +94,10 @@ enum WorkspaceRole {
 }
 
 enum SubscriptionPlan {
-  FREE
+  STARTER
   GROWTH
-  BUSINESS
-  ACCOUNTANT
+  PROFESSIONAL
+  ENTERPRISE
 }
 
 enum InvoiceStatus {
@@ -90,14 +120,292 @@ enum BankTransactionType {
 
 enum BankTransactionStatus {
   UNMATCHED
+  SUGGESTED
   MATCHED
   IGNORED
+  SPLIT
+  REVIEW_REQUIRED
+}
+
+enum BankStatementImportStatus {
+  PENDING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
+enum BankTransactionBusinessType {
+  INCOME
+  EXPENSE
+  TRANSFER
+  OWNER_DRAW
+  UNKNOWN
+}
+
+enum ReconciliationMatchStatus {
+  SUGGESTED
+  APPROVED
+  REJECTED
 }
 
 enum ReconciliationMatchType {
+  LEDGER_TRANSACTION
+  BOOKKEEPING_DRAFT
   INVOICE
   TAX_RECORD
   MANUAL
+  SPLIT
+}
+
+enum ClientBusinessStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum LedgerCategoryType {
+  INCOME
+  EXPENSE
+  ASSET
+  LIABILITY
+  EQUITY
+  OTHER
+}
+
+enum LedgerDirection {
+  MONEY_IN
+  MONEY_OUT
+  JOURNAL
+}
+
+enum TransactionOrigin {
+  MANUAL
+  AI_DRAFT
+  IMPORT
+}
+
+enum TransactionReviewStatus {
+  DRAFT
+  IN_REVIEW
+  POSTED
+}
+
+enum VatTreatment {
+  NONE
+  INPUT
+  OUTPUT
+  EXEMPT
+}
+
+enum WhtTreatment {
+  NONE
+  PAYABLE
+  RECEIVABLE
+}
+
+enum BookkeepingUploadSource {
+  RECEIPT
+  BILL
+  INVOICE
+  BANK_STATEMENT
+  CSV
+  OTHER
+}
+
+enum BookkeepingUploadStatus {
+  QUEUED
+  PROCESSING
+  READY_FOR_REVIEW
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+  FAILED
+}
+
+enum DraftReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_INFO
+}
+
+model ClientBusiness {
+  id                      Int                  @id @default(autoincrement())
+  workspaceId             Int
+  name                    String
+  legalName               String?
+  industry                String?
+  country                 String               @default("Nigeria")
+  state                   String?
+  taxIdentificationNumber String?
+  vatRegistrationNumber   String?
+  defaultCurrency         String               @default("NGN")
+  fiscalYearStartMonth    Int                  @default(1)
+  status                  ClientBusinessStatus @default(ACTIVE)
+  archivedAt              DateTime?
+  notes                   String?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+
+  workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  vendors            Vendor[]
+  categories         TransactionCategory[]
+  transactions       LedgerTransaction[]
+  bookkeepingUploads BookkeepingUpload[]
+  bankAccounts       BankAccount[]
+  bankStatementImports BankStatementImport[]
+  bankTransactions   BankTransaction[]
+  bankTransactionSplitLines BankTransactionSplitLine[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, status])
+  @@index([workspaceId, archivedAt])
+}
+
+model Vendor {
+  id                      Int      @id @default(autoincrement())
+  clientBusinessId        Int
+  name                    String
+  email                   String?
+  phone                   String?
+  taxIdentificationNumber String?
+  vatRegistrationNumber   String?
+  notes                   String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  clientBusiness ClientBusiness     @relation(fields: [clientBusinessId], references: [id], onDelete: Cascade)
+  transactions   LedgerTransaction[]
+  drafts         BookkeepingDraft[]
+  bankTransactionSplitLines BankTransactionSplitLine[]
+
+  @@unique([clientBusinessId, name])
+  @@index([clientBusinessId, name])
+}
+
+model TransactionCategory {
+  id               Int                @id @default(autoincrement())
+  clientBusinessId Int
+  name             String
+  code             String?
+  type             LedgerCategoryType @default(EXPENSE)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  clientBusiness ClientBusiness      @relation(fields: [clientBusinessId], references: [id], onDelete: Cascade)
+  transactions   LedgerTransaction[]
+  drafts         BookkeepingDraft[]
+  bankTransactionSplitLines BankTransactionSplitLine[]
+
+  @@unique([clientBusinessId, name])
+  @@index([clientBusinessId, type, name])
+}
+
+model LedgerTransaction {
+  id               Int                     @id @default(autoincrement())
+  clientBusinessId Int
+  vendorId         Int?
+  categoryId       Int?
+  bankTransactionId Int?
+  sourceDraftId    Int?                    @unique
+  createdByUserId  Int?
+  transactionDate  DateTime
+  description      String
+  reference        String?
+  direction        LedgerDirection
+  amountMinor      Int
+  currency         String                  @default("NGN")
+  vatAmountMinor   Int                     @default(0)
+  whtAmountMinor   Int                     @default(0)
+  vatTreatment     VatTreatment            @default(NONE)
+  whtTreatment     WhtTreatment            @default(NONE)
+  origin           TransactionOrigin       @default(MANUAL)
+  reviewStatus     TransactionReviewStatus @default(DRAFT)
+  notes            String?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  clientBusiness ClientBusiness       @relation(fields: [clientBusinessId], references: [id], onDelete: Cascade)
+  vendor         Vendor?              @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  category       TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  bankTransaction BankTransaction?    @relation("BankTransactionLedgerEntries", fields: [bankTransactionId], references: [id], onDelete: SetNull)
+  sourceDraft    BookkeepingDraft?    @relation("DraftToTransaction", fields: [sourceDraftId], references: [id], onDelete: SetNull)
+  createdBy      User?                @relation("LedgerTransactionActor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  splitLines     BankTransactionSplitLine[]
+  reconciliationMatches ReconciliationMatch[]
+
+  @@index([clientBusinessId, transactionDate])
+  @@index([clientBusinessId, reviewStatus])
+  @@index([vendorId, transactionDate])
+  @@index([categoryId, transactionDate])
+  @@index([bankTransactionId])
+}
+
+model BookkeepingUpload {
+  id               Int                     @id @default(autoincrement())
+  clientBusinessId Int
+  uploadedByUserId Int?
+  fileName         String
+  fileType         String?
+  sourceType       BookkeepingUploadSource @default(OTHER)
+  status           BookkeepingUploadStatus @default(QUEUED)
+  uploadSizeBytes  Int?
+  reviewNotes      String?
+  rawText          String?
+  aiPayload        String?
+  failureReason    String?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  reviewedAt       DateTime?
+
+  clientBusiness ClientBusiness     @relation(fields: [clientBusinessId], references: [id], onDelete: Cascade)
+  uploadedBy     User?              @relation("BookkeepingUploadActor", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  drafts         BookkeepingDraft[]
+
+  @@index([clientBusinessId, status, createdAt])
+  @@index([uploadedByUserId])
+}
+
+model BookkeepingDraft {
+  id                    Int                @id @default(autoincrement())
+  uploadId              Int
+  vendorId              Int?
+  categoryId            Int?
+  reviewedByUserId      Int?
+  proposedDate          DateTime?
+  description           String?
+  reference             String?
+  vendorName            String?
+  suggestedCategoryName String?
+  direction             LedgerDirection
+  amountMinor           Int?
+  taxAmountMinor        Int?
+  taxRate               Float              @default(0)
+  currency              String             @default("NGN")
+  vatAmountMinor        Int                @default(0)
+  whtAmountMinor        Int                @default(0)
+  vatTreatment          VatTreatment       @default(NONE)
+  whtTreatment          WhtTreatment       @default(NONE)
+  confidence            Float?
+  reviewStatus          DraftReviewStatus  @default(PENDING)
+  reviewerNote          String?
+  aiPayload             String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  reviewedAt            DateTime?
+  approvedAt            DateTime?
+  rejectedAt            DateTime?
+
+  upload            BookkeepingUpload    @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  vendor            Vendor?              @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  category          TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  reviewedBy        User?                @relation("BookkeepingDraftReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  ledgerTransaction LedgerTransaction?   @relation("DraftToTransaction")
+  reconciliationMatches ReconciliationMatch[]
+
+  @@index([uploadId, reviewStatus])
+  @@index([categoryId])
+  @@index([vendorId])
+  @@index([reviewedByUserId])
 }
 
 model Client {
@@ -192,8 +500,9 @@ model RecurringInvoice {
 model WorkspaceSubscription {
   id                       Int              @id @default(autoincrement())
   workspaceId              Int              @unique
-  plan                     SubscriptionPlan @default(FREE)
+  plan                     SubscriptionPlan @default(STARTER)
   status                   String?
+  billingInterval          String           @default("MONTHLY")
   paystackCustomerCode     String?
   paystackSubscriptionCode String?
   paystackSubscriptionToken String?
@@ -253,6 +562,19 @@ model Session {
   @@index([expiresAt])
 }
 
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  tokenHash String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 model TaxRecord {
   id                    Int                   @id @default(autoincrement())
   userId                Int
@@ -261,6 +583,7 @@ model TaxRecord {
   workspace             Workspace?            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   invoiceId             Int?
   invoice               Invoice?              @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  bankTransactionId     Int?
   categoryId            Int?
   category              ExpenseCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   kind                  String
@@ -272,15 +595,18 @@ model TaxRecord {
   occurredOn            DateTime
   description           String?
   source                String?
+  aiMetadata            String?
   vendorName            String?
   recurring             Boolean               @default(false)
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
+  bankTransaction       BankTransaction?      @relation("BankTransactionTaxRecords", fields: [bankTransactionId], references: [id], onDelete: SetNull)
   reconciliationMatches ReconciliationMatch[]
 
   @@index([userId, occurredOn])
   @@index([workspaceId, occurredOn])
   @@index([categoryId])
+  @@index([bankTransactionId])
   @@unique([invoiceId])
 }
 
@@ -297,51 +623,168 @@ model ExpenseCategory {
 }
 
 model BankAccount {
-  id            Int              @id @default(autoincrement())
-  workspaceId   Int
-  name          String
-  bankName      String
-  accountNumber String
-  currency      String           @default("NGN")
-  createdAt     DateTime         @default(now())
-  workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  transactions  BankTransaction[]
+  id               Int                  @id @default(autoincrement())
+  workspaceId      Int
+  clientBusinessId Int?
+  name             String
+  bankName         String
+  accountNumber    String
+  currency         String               @default("NGN")
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  clientBusiness   ClientBusiness?      @relation(fields: [clientBusinessId], references: [id], onDelete: SetNull)
+  statementImports BankStatementImport[]
+  transactions     BankTransaction[]
 
   @@index([workspaceId, name])
+  @@index([clientBusinessId, name])
+}
+
+model BankStatementImport {
+  id               Int                      @id @default(autoincrement())
+  workspaceId      Int
+  clientBusinessId Int?
+  bankAccountId    Int
+  uploadedByUserId Int?
+  fileName         String
+  fileType         String?
+  uploadSizeBytes  Int?
+  status           BankStatementImportStatus @default(PENDING)
+  mappingJson      String?
+  rawHeaders       String?
+  rowCount         Int                      @default(0)
+  importedCount    Int                      @default(0)
+  duplicateCount   Int                      @default(0)
+  failedCount      Int                      @default(0)
+  warningCount     Int                      @default(0)
+  failureReason    String?
+  createdAt        DateTime                 @default(now())
+  processedAt      DateTime?
+  updatedAt        DateTime                 @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  clientBusiness ClientBusiness? @relation(fields: [clientBusinessId], references: [id], onDelete: SetNull)
+  bankAccount    BankAccount     @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  uploadedBy     User?           @relation("BankStatementImportActor", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  transactions   BankTransaction[]
+
+  @@index([workspaceId, createdAt])
+  @@index([clientBusinessId, createdAt])
+  @@index([bankAccountId, createdAt])
 }
 
 model BankTransaction {
-  id              Int                   @id @default(autoincrement())
-  workspaceId     Int
-  bankAccountId   Int
-  transactionDate DateTime
-  description     String
-  reference       String?
-  amount          Int
-  type            BankTransactionType
-  status          BankTransactionStatus @default(UNMATCHED)
-  createdAt       DateTime              @default(now())
-  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  bankAccount     BankAccount           @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
-  match           ReconciliationMatch?
+  id                       Int                         @id @default(autoincrement())
+  workspaceId              Int
+  clientBusinessId         Int?
+  bankAccountId            Int
+  statementImportId        Int?
+  uploadedByUserId         Int?
+  transactionDate          DateTime
+  description              String
+  reference                String?
+  amount                   Int
+  debitAmountMinor         Int?
+  creditAmountMinor        Int?
+  balanceAmountMinor       Int?
+  type                     BankTransactionType
+  status                   BankTransactionStatus      @default(UNMATCHED)
+  sourceRowNumber          Int?
+  rawRowPayload            String?
+  currency                 String                     @default("NGN")
+  suggestedType            BankTransactionBusinessType @default(UNKNOWN)
+  suggestedCounterparty    String?
+  suggestedCategoryName    String?
+  suggestedVatTreatment    VatTreatment              @default(NONE)
+  suggestedWhtTreatment    WhtTreatment              @default(NONE)
+  suggestedNarrationMeaning String?
+  confidenceScore          Float?
+  categorizationProvider   String?
+  reviewNotes              String?
+  matchedAt                DateTime?
+  ignoredAt                DateTime?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  workspace                Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  clientBusiness           ClientBusiness?           @relation(fields: [clientBusinessId], references: [id], onDelete: SetNull)
+  bankAccount              BankAccount               @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  statementImport          BankStatementImport?      @relation(fields: [statementImportId], references: [id], onDelete: SetNull)
+  uploadedBy               User?                     @relation("BankTransactionActor", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  matches                  ReconciliationMatch[]
+  ledgerTransactions       LedgerTransaction[]       @relation("BankTransactionLedgerEntries")
+  taxRecords               TaxRecord[]               @relation("BankTransactionTaxRecords")
+  splitLines               BankTransactionSplitLine[]
 
   @@index([workspaceId, transactionDate])
+  @@index([workspaceId, status, transactionDate])
   @@index([bankAccountId, transactionDate])
+  @@index([clientBusinessId, transactionDate])
+  @@index([statementImportId, sourceRowNumber])
 }
 
 model ReconciliationMatch {
   id                Int                     @id @default(autoincrement())
   workspaceId       Int
   bankTransactionId Int
+  ledgerTransactionId Int?
+  bookkeepingDraftId Int?
   invoiceId         Int?
   taxRecordId       Int?
   matchType         ReconciliationMatchType
+  status            ReconciliationMatchStatus @default(SUGGESTED)
+  score             Float                   @default(0)
+  matchedAmountMinor Int?
+  rationale         String?
+  approvedByUserId  Int?
+  approvedAt        DateTime?
   createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
   workspace         Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   bankTransaction   BankTransaction         @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  ledgerTransaction LedgerTransaction?      @relation(fields: [ledgerTransactionId], references: [id], onDelete: SetNull)
+  bookkeepingDraft  BookkeepingDraft?       @relation(fields: [bookkeepingDraftId], references: [id], onDelete: SetNull)
   invoice           Invoice?                @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   taxRecord         TaxRecord?              @relation(fields: [taxRecordId], references: [id], onDelete: SetNull)
+  approvedBy        User?                   @relation("ReconciliationMatchApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
-  @@unique([bankTransactionId])
+  @@index([bankTransactionId, status])
   @@index([workspaceId, createdAt])
+  @@index([ledgerTransactionId])
+  @@index([bookkeepingDraftId])
+  @@index([invoiceId])
+  @@index([taxRecordId])
+}
+
+model BankTransactionSplitLine {
+  id                  Int                  @id @default(autoincrement())
+  bankTransactionId   Int
+  clientBusinessId    Int?
+  vendorId            Int?
+  categoryId          Int?
+  ledgerTransactionId Int?
+  createdByUserId     Int?
+  description         String
+  reference           String?
+  amountMinor         Int
+  direction           LedgerDirection
+  currency            String               @default("NGN")
+  vatAmountMinor      Int                  @default(0)
+  whtAmountMinor      Int                  @default(0)
+  vatTreatment        VatTreatment         @default(NONE)
+  whtTreatment        WhtTreatment         @default(NONE)
+  notes               String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  bankTransaction   BankTransaction      @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  clientBusiness    ClientBusiness?      @relation(fields: [clientBusinessId], references: [id], onDelete: SetNull)
+  vendor            Vendor?              @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  category          TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  ledgerTransaction LedgerTransaction?   @relation(fields: [ledgerTransactionId], references: [id], onDelete: SetNull)
+  createdBy         User?                @relation("BankTransactionSplitActor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([bankTransactionId, createdAt])
+  @@index([clientBusinessId, createdAt])
+  @@index([ledgerTransactionId])
 }

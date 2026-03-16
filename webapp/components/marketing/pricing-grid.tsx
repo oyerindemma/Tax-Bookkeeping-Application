@@ -2,10 +2,14 @@ import Link from "next/link";
 import type { SubscriptionPlan } from "@prisma/client";
 import { CheckCircle2 } from "lucide-react";
 import {
-  PLAN_ORDER,
+  formatAiScanLimit,
+  formatAnnualSavings,
   formatLimit,
-  formatPlanPricePerMonth,
+  formatPlanPricePerInterval,
+  getPaystackPlanCode,
   getPlanConfig,
+  PLAN_ORDER,
+  type BillingInterval,
 } from "@/src/lib/billing";
 import { SubscriptionActionButton } from "@/components/billing/subscription-action-button";
 import { Badge } from "@/components/ui/badge";
@@ -19,32 +23,32 @@ import {
 } from "@/components/ui/card";
 
 const planFit: Record<(typeof PLAN_ORDER)[number], string> = {
-  FREE: "Solo operators building a clean bookkeeping workflow before the team grows.",
-  GROWTH: "Small teams that need AI-assisted capture and more operating headroom.",
-  BUSINESS: "Finance teams that need banking workflows and recurring billing.",
-  ACCOUNTANT: "Accounting firms and advanced operators who need controls, collaboration, and scale.",
+  STARTER: "Small Nigerian businesses validating their bookkeeping workflow before paying for automation.",
+  GROWTH: "Startups and lean finance teams that want AI capture without moving into advanced controls yet.",
+  PROFESSIONAL: "Accounting firms and finance operators managing multiple businesses with reconciliation and review needs.",
+  ENTERPRISE: "Larger firms that need unlimited scale, integrations, and priority operational support.",
 };
 
 const planHighlights: Record<(typeof PLAN_ORDER)[number], string[]> = {
-  FREE: [
-    "Invoices, clients, tax records, and reports",
-    "One workspace member and essential bookkeeping workflows",
-    "Great for solo operators getting started",
+  STARTER: [
+    "Manual bookkeeping, VAT summary, and core reports",
+    "One business and one user to get started cleanly",
+    "Best for testing the workflow before automation",
   ],
   GROWTH: [
-    "Everything in Free",
-    "AI receipt scanning and assistant workflows",
-    "Higher member and record limits for growing teams",
+    "Everything in Starter",
+    "AI receipt scanning and bookkeeping automation",
+    "Invoice management plus more businesses and AI volume",
   ],
-  BUSINESS: [
+  PROFESSIONAL: [
     "Everything in Growth",
-    "Bank accounts, statement imports, and reconciliation",
-    "Recurring invoices for repeat client billing",
+    "Bank statement AI reconciliation and advanced reporting",
+    "Tax filing assistant, audit logs, and team collaboration",
   ],
-  ACCOUNTANT: [
-    "Everything in Business",
-    "Audit history and advanced team collaboration",
-    "Built for firms and more complex finance operations",
+  ENTERPRISE: [
+    "Everything in Professional",
+    "Unlimited businesses, users, and AI scans",
+    "API integrations, tax automation, and priority support",
   ],
 };
 
@@ -54,6 +58,7 @@ type PricingGridProps = {
   currentPlan?: SubscriptionPlan | null;
   loggedIn?: boolean;
   hasActiveWorkspace?: boolean;
+  interval?: BillingInterval;
 };
 
 export function PricingGrid({
@@ -62,12 +67,18 @@ export function PricingGrid({
   currentPlan = null,
   loggedIn = false,
   hasActiveWorkspace = false,
+  interval = "MONTHLY",
 }: PricingGridProps) {
   return (
     <div className="grid gap-4 xl:grid-cols-4">
       {PLAN_ORDER.map((plan) => {
         const config = getPlanConfig(plan);
-        const isFeatured = plan === "BUSINESS";
+        const savings = formatAnnualSavings(plan);
+        const isFeatured = config.featured === true;
+        const isConfigured =
+          plan === "STARTER" || plan === "ENTERPRISE"
+            ? true
+            : Boolean(getPaystackPlanCode(plan, interval));
 
         return (
           <Card
@@ -87,20 +98,34 @@ export function PricingGrid({
             </CardHeader>
             <CardContent className={compact ? "space-y-4" : "space-y-5"}>
               <div>
-                <p className="text-sm text-muted-foreground">Monthly subscription</p>
-                <p className="mt-2 text-3xl font-semibold">{formatPlanPricePerMonth(plan)}</p>
+                <p className="text-sm text-muted-foreground">
+                  {interval === "ANNUAL" ? "Annual subscription" : "Monthly subscription"}
+                </p>
+                <p className="mt-2 text-3xl font-semibold">
+                  {formatPlanPricePerInterval(plan, interval)}
+                </p>
+                {interval === "ANNUAL" && savings ? (
+                  <p className="mt-2 text-xs text-emerald-700">Save {savings} per year</p>
+                ) : null}
               </div>
 
               <p className="text-sm leading-6 text-muted-foreground">{planFit[plan]}</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                Best for: {config.target}
+              </p>
 
               <div className="space-y-3 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">Workspace members</span>
-                  <span className="font-medium">{formatLimit(config.maxMembers)}</span>
+                  <span className="text-muted-foreground">Businesses</span>
+                  <span className="font-medium">{formatLimit(config.maxBusinesses)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">Tax records</span>
-                  <span className="font-medium">{formatLimit(config.maxRecords)}</span>
+                  <span className="text-muted-foreground">Users</span>
+                  <span className="font-medium">{formatLimit(config.maxUsers)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">AI scans / month</span>
+                  <span className="font-medium">{formatAiScanLimit(config.aiScansPerMonth)}</span>
                 </div>
               </div>
 
@@ -116,18 +141,31 @@ export function PricingGrid({
               ) : null}
 
               {interactive ? (
-                <SubscriptionActionButton
-                  plan={plan}
-                  planName={config.name}
-                  currentPlan={currentPlan}
-                  loggedIn={loggedIn}
-                  hasActiveWorkspace={hasActiveWorkspace}
-                  variant={isFeatured ? "default" : "outline"}
-                  className="w-full"
-                />
-              ) : plan === "FREE" ? (
+                <div className="space-y-2">
+                  <SubscriptionActionButton
+                    plan={plan}
+                    planName={config.name}
+                    currentPlan={currentPlan}
+                    loggedIn={loggedIn}
+                    hasActiveWorkspace={hasActiveWorkspace}
+                    billingInterval={interval}
+                    disabled={!isConfigured}
+                    variant={isFeatured ? "default" : "outline"}
+                    className="w-full"
+                  />
+                  {!isConfigured ? (
+                    <p className="text-xs text-muted-foreground">
+                      Checkout for this billing interval still needs wiring.
+                    </p>
+                  ) : null}
+                </div>
+              ) : plan === "STARTER" ? (
                 <Button asChild className="w-full" variant={isFeatured ? "default" : "outline"}>
-                  <Link href="/signup">Get started free</Link>
+                  <Link href="/signup">Start Free</Link>
+                </Button>
+              ) : plan === "ENTERPRISE" ? (
+                <Button asChild className="w-full" variant={isFeatured ? "default" : "outline"}>
+                  <Link href="/contact">Contact Sales</Link>
                 </Button>
               ) : (
                 <Button asChild className="w-full" variant={isFeatured ? "default" : "outline"}>

@@ -1,9 +1,5 @@
 import { requireUser } from "@/src/lib/auth";
-import {
-  formatPlanPricePerMonth,
-  getPlanConfig,
-  getWorkspaceFeatureAccess,
-} from "@/src/lib/billing";
+import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import { prisma } from "@/src/lib/prisma";
 import { getActiveWorkspaceMembership } from "@/src/lib/workspaces";
 import { FeatureGateCard } from "@/components/billing/feature-gate-card";
@@ -43,15 +39,13 @@ export default async function AuditPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Audit log</h1>
           <p className="text-muted-foreground">
-            Audit history is reserved for the Accountant plan.
+            Audit history is available from Professional upward.
           </p>
         </div>
         <FeatureGateCard
-          featureName="Audit log"
-          featureDescription="Review workspace history, operational changes, and governance activity."
-          currentPlanName={getPlanConfig(access.plan).name}
-          requiredPlanName={getPlanConfig(access.requiredPlan).name}
-          requiredPlanPrice={formatPlanPricePerMonth(access.requiredPlan)}
+          feature="AUDIT_LOG"
+          currentPlan={access.plan}
+          requiredPlan={access.requiredPlan}
         />
       </section>
     );

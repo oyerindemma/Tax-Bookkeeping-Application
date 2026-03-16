@@ -22,6 +22,9 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 const navItems = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/workspaces", label: "Workspaces" },
+  { href: "/dashboard/client-businesses", label: "Client businesses" },
+  { href: "/dashboard/bookkeeping/review", label: "Bookkeeping review" },
+  { href: "/dashboard/tax-summary", label: "Tax summary" },
   { href: "/dashboard/tax-records", label: "Tax records" },
   { href: "/dashboard/invoices", label: "Invoices" },
   { href: "/dashboard/recurring-invoices", label: "Recurring invoices" },

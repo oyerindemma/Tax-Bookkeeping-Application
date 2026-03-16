@@ -1,42 +1,19 @@
 import { NextResponse } from "next/server";
 import { getAuthContext, requireRoleAtLeast } from "@/src/lib/auth";
-import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
-import { getOpenAiServerConfig } from "@/src/lib/env";
+import { logAudit } from "@/src/lib/audit";
+import { enforceAiScanLimit, getWorkspaceFeatureAccess } from "@/src/lib/billing";
+import {
+  BOOKKEEPING_CATEGORY_GUIDANCE,
+  buildFallbackTextSuggestion,
+  buildLegacyTaxRecordDraft,
+  extractOutputText,
+  normalizeBookkeepingSuggestion,
+} from "@/src/lib/bookkeeping-ai";
+import { getOpenAiServerConfig, hasOpenAiServerConfig } from "@/src/lib/env";
 import { logRouteError } from "@/src/lib/logger";
+import { NIGERIA_TAX_CONFIG } from "@/src/lib/nigeria-tax-config";
 
 export const runtime = "nodejs";
-
-const CATEGORY_GUIDANCE =
-  "When a category fits, prefer one of these exact names: Office, Software, Utilities, Marketing, Transport, Rent, Miscellaneous.";
-
-function extractOutputText(data: unknown) {
-  if (data && typeof data === "object" && "output_text" in data) {
-    const value = (data as { output_text?: string }).output_text;
-    if (typeof value === "string" && value.trim()) return value;
-  }
-
-  const output =
-    data && typeof data === "object" && "output" in data
-      ? (data as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> })
-          .output
-      : undefined;
-
-  if (!Array.isArray(output)) return null;
-
-  const chunks: string[] = [];
-  for (const item of output) {
-    const content = item?.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (typeof part?.text === "string") {
-        chunks.push(part.text);
-      }
-    }
-  }
-
-  const text = chunks.join("").trim();
-  return text || null;
-}
 
 export async function POST(req: Request) {
   const ctx = await getAuthContext();
@@ -59,12 +36,64 @@ export async function POST(req: Request) {
       { status: 402 }
     );
   }
+  const aiScanLimit = await enforceAiScanLimit(ctx.workspaceId, 1);
+  if (!aiScanLimit.ok) {
+    return NextResponse.json(
+      {
+        error: aiScanLimit.error,
+        currentPlan: aiScanLimit.plan,
+        maxAiScansPerMonth: aiScanLimit.max,
+        currentAiScansThisMonth: aiScanLimit.current,
+        recommendedPlan: aiScanLimit.recommendedPlan,
+      },
+      { status: 402 }
+    );
+  }
 
   try {
     const body = await req.json();
     const text = typeof body?.text === "string" ? body.text.trim() : "";
     if (!text) {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
+    }
+    if (text.length > 5000) {
+      return NextResponse.json(
+        { error: "text must be 5000 characters or less" },
+        { status: 400 }
+      );
+    }
+
+    if (!hasOpenAiServerConfig()) {
+      const suggestion = buildFallbackTextSuggestion(text);
+      const draft = buildLegacyTaxRecordDraft(suggestion);
+      const metadata = {
+        version: 1 as const,
+        provider: "heuristic-fallback" as const,
+        route: "tax-record-draft" as const,
+        model: null,
+        sourceType: "text" as const,
+        generatedAt: new Date().toISOString(),
+        warnings: ["OPENAI_API_KEY is not configured. Using local bookkeeping heuristics."],
+      };
+
+      await logAudit({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        action: "AI_BOOKKEEPING_SUGGESTION_GENERATED",
+        metadata: {
+          route: metadata.route,
+          sourceType: metadata.sourceType,
+          provider: metadata.provider,
+          fallback: true,
+        },
+      });
+
+      return NextResponse.json({
+        available: false,
+        suggestion,
+        draft,
+        metadata,
+      });
     }
 
     const { apiKey, model } = getOpenAiServerConfig();
@@ -73,62 +102,110 @@ export async function POST(req: Request) {
       type: "object",
       additionalProperties: false,
       properties: {
-        kind: {
+        classification: {
           type: "string",
-          enum: ["INCOME", "EXPENSE", "VAT", "WHT"],
+          enum: ["INCOME", "EXPENSE"],
         },
         amount: {
-          type: "number",
-          description: "Amount in major currency units (e.g., 1234.56)",
+          type: ["number", "null"],
+          description: "Amount in major currency units (for example 1234.56)",
         },
         currency: {
           type: "string",
           description: "ISO currency code, default NGN",
         },
-        date: {
-          type: "string",
-          description: "YYYY-MM-DD",
+        transactionDate: {
+          type: ["string", "null"],
+          description: "Transaction date in YYYY-MM-DD format",
         },
         description: {
           type: "string",
-          description: "Short summary",
+          description: "Short bookkeeping summary",
         },
-        category: {
+        suggestedCategory: {
           type: ["string", "null"],
-          description: "Expense category name if available, otherwise null",
+          description: "Suggested expense category name when relevant",
         },
         vendorName: {
           type: ["string", "null"],
-          description: "Vendor or merchant name if available, otherwise null",
+          description: "Vendor, merchant, customer, or payee when identifiable",
         },
-        taxType: {
+        vat: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            relevance: {
+              type: "string",
+              enum: ["RELEVANT", "NOT_RELEVANT", "UNCERTAIN"],
+            },
+            suggestedRate: {
+              type: "number",
+              description: `Suggested VAT rate percentage. Use ${NIGERIA_TAX_CONFIG.vat.standardRate} for standard Nigerian VAT when clearly applicable.`,
+            },
+            reason: {
+              type: "string",
+              description: "Short reason for the VAT suggestion",
+            },
+          },
+          required: ["relevance", "suggestedRate", "reason"],
+        },
+        wht: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            relevance: {
+              type: "string",
+              enum: ["RELEVANT", "NOT_RELEVANT", "UNCERTAIN"],
+            },
+            suggestedRate: {
+              type: "number",
+              description: "Suggested WHT rate percentage when clearly supported, otherwise 0.",
+            },
+            reason: {
+              type: "string",
+              description: "Short reason for the WHT suggestion",
+            },
+          },
+          required: ["relevance", "suggestedRate", "reason"],
+        },
+        confidence: {
           type: "string",
-          enum: ["VAT", "WHT", "NONE", "CUSTOM"],
+          enum: ["HIGH", "MEDIUM", "LOW"],
         },
-        suggestedTaxRate: {
-          type: "number",
-          description: "Percent 0-100",
+        notes: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 5,
         },
       },
       required: [
-        "kind",
+        "classification",
         "amount",
         "currency",
-        "date",
+        "transactionDate",
         "description",
-        "category",
+        "suggestedCategory",
         "vendorName",
-        "taxType",
-        "suggestedTaxRate",
+        "vat",
+        "wht",
+        "confidence",
+        "notes",
       ],
     };
 
     const prompt =
-      "Extract a tax record draft from this receipt text. " +
-      "If missing, use currency NGN and suggestedTaxRate 0. " +
-      "Return the best guess for kind and taxType. " +
-      `${CATEGORY_GUIDANCE} ` +
-      "If you can infer a category or vendor name, include them.\n\nReceipt text:\n" +
+      "You are a bookkeeping extraction assistant for TaxBook AI, a Nigerian business bookkeeping product. " +
+      "Read the transaction text and return a conservative bookkeeping suggestion. " +
+      "Classify the transaction as INCOME or EXPENSE. " +
+      "Extract vendorName, amount, currency, transactionDate, description, and suggestedCategory when possible. " +
+      "Assess VAT and WHT relevance for Nigerian businesses. " +
+      "Use VAT relevance RELEVANT only when VAT is explicit or strongly implied; otherwise use UNCERTAIN or NOT_RELEVANT. " +
+      "Use WHT relevance RELEVANT only when withholding is explicit or the transaction clearly looks like a service or contract payment; otherwise prefer UNCERTAIN or NOT_RELEVANT. " +
+      "If no amount is visible, return null for amount. " +
+      "Use NGN when currency is missing. " +
+      `Treat ${NIGERIA_TAX_CONFIG.vat.standardRate}% as the standard VAT rate when VAT clearly applies. ` +
+      `${BOOKKEEPING_CATEGORY_GUIDANCE} ` +
+      "Keep notes brief and practical.\n\nTransaction text:\n" +
       text;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -178,7 +255,36 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({ draft });
+    const suggestion = normalizeBookkeepingSuggestion(draft);
+    const legacyDraft = buildLegacyTaxRecordDraft(suggestion);
+    const metadata = {
+      version: 1 as const,
+      provider: "openai" as const,
+      route: "tax-record-draft" as const,
+      model,
+      sourceType: "text" as const,
+      generatedAt: new Date().toISOString(),
+      warnings: [] as string[],
+    };
+
+    await logAudit({
+      workspaceId: ctx.workspaceId,
+      actorUserId: ctx.userId,
+      action: "AI_BOOKKEEPING_SUGGESTION_GENERATED",
+      metadata: {
+        route: metadata.route,
+        sourceType: metadata.sourceType,
+        provider: metadata.provider,
+        confidence: suggestion.confidence,
+      },
+    });
+
+    return NextResponse.json({
+      available: true,
+      suggestion,
+      draft: legacyDraft,
+      metadata,
+    });
   } catch (error) {
     logRouteError("ai tax record draft failed", error, {
       workspaceId: ctx.workspaceId,

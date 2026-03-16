@@ -1,42 +1,18 @@
 import { NextResponse } from "next/server";
 import { getAuthContext, requireRoleAtLeast } from "@/src/lib/auth";
-import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
-import { getOpenAiServerConfig } from "@/src/lib/env";
+import { logAudit } from "@/src/lib/audit";
+import { enforceAiScanLimit, getWorkspaceFeatureAccess } from "@/src/lib/billing";
+import {
+  BOOKKEEPING_CATEGORY_GUIDANCE,
+  buildLegacyTaxRecordDraft,
+  extractOutputText,
+  normalizeBookkeepingSuggestion,
+} from "@/src/lib/bookkeeping-ai";
+import { getOpenAiServerConfig, hasOpenAiServerConfig } from "@/src/lib/env";
 import { logRouteError } from "@/src/lib/logger";
+import { NIGERIA_TAX_CONFIG } from "@/src/lib/nigeria-tax-config";
 
 export const runtime = "nodejs";
-
-const CATEGORY_GUIDANCE =
-  "When a category fits, prefer one of these exact names: Office, Software, Utilities, Marketing, Transport, Rent, Miscellaneous.";
-
-function extractOutputText(data: unknown) {
-  if (data && typeof data === "object" && "output_text" in data) {
-    const value = (data as { output_text?: string }).output_text;
-    if (typeof value === "string" && value.trim()) return value;
-  }
-
-  const output =
-    data && typeof data === "object" && "output" in data
-      ? (data as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> })
-          .output
-      : undefined;
-
-  if (!Array.isArray(output)) return null;
-
-  const chunks: string[] = [];
-  for (const item of output) {
-    const content = item?.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (typeof part?.text === "string") {
-        chunks.push(part.text);
-      }
-    }
-  }
-
-  const text = chunks.join("").trim();
-  return text || null;
-}
 
 export async function POST(req: Request) {
   const ctx = await getAuthContext();
@@ -59,6 +35,19 @@ export async function POST(req: Request) {
       { status: 402 }
     );
   }
+  const aiScanLimit = await enforceAiScanLimit(ctx.workspaceId, 1);
+  if (!aiScanLimit.ok) {
+    return NextResponse.json(
+      {
+        error: aiScanLimit.error,
+        currentPlan: aiScanLimit.plan,
+        maxAiScansPerMonth: aiScanLimit.max,
+        currentAiScansThisMonth: aiScanLimit.current,
+        recommendedPlan: aiScanLimit.recommendedPlan,
+      },
+      { status: 402 }
+    );
+  }
 
   try {
     const formData = await req.formData();
@@ -68,6 +57,46 @@ export async function POST(req: Request) {
     }
     if (!file.type?.startsWith("image/")) {
       return NextResponse.json({ error: "image must be a valid image file" }, { status: 400 });
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      return NextResponse.json(
+        { error: "image must be 5MB or smaller" },
+        { status: 400 }
+      );
+    }
+
+    if (!hasOpenAiServerConfig()) {
+      const metadata = {
+        version: 1 as const,
+        provider: "unavailable" as const,
+        route: "receipt-scan" as const,
+        model: null,
+        sourceType: "receipt-image" as const,
+        generatedAt: new Date().toISOString(),
+        fileName: file.name || null,
+        warnings: [
+          "OPENAI_API_KEY is not configured. Receipt image analysis is unavailable. Paste transaction text instead.",
+        ],
+      };
+
+      await logAudit({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        action: "AI_BOOKKEEPING_SUGGESTION_GENERATED",
+        metadata: {
+          route: metadata.route,
+          sourceType: metadata.sourceType,
+          provider: metadata.provider,
+          available: false,
+        },
+      });
+
+      return NextResponse.json({
+        available: false,
+        suggestion: null,
+        draft: null,
+        metadata,
+      });
     }
 
     const arrayBuffer = await file.arrayBuffer();
@@ -82,52 +111,104 @@ export async function POST(req: Request) {
       additionalProperties: false,
       properties: {
         amount: {
-          type: "number",
-          description: "Total amount in major currency units (e.g., 1234.56)",
+          type: ["number", "null"],
+          description: "Total amount in major currency units (for example 1234.56)",
         },
-        taxRate: {
-          type: "number",
-          description: "Tax rate percentage 0-100 (use 0 if not present)",
-        },
-        date: {
+        classification: {
           type: "string",
-          description: "YYYY-MM-DD",
+          enum: ["INCOME", "EXPENSE"],
+        },
+        currency: {
+          type: "string",
+          description: "ISO currency code, default NGN",
+        },
+        transactionDate: {
+          type: ["string", "null"],
+          description: "Transaction date in YYYY-MM-DD format",
         },
         description: {
           type: "string",
-          description: "Short summary of the receipt",
+          description: "Short bookkeeping summary",
         },
-        category: {
+        suggestedCategory: {
           type: ["string", "null"],
-          description: "Expense category name if available, otherwise null",
+          description: "Suggested expense category when relevant",
         },
         vendorName: {
           type: ["string", "null"],
-          description: "Vendor or merchant name if available, otherwise null",
+          description: "Vendor, merchant, customer, or payee when identifiable",
         },
-        type: {
+        vat: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            relevance: {
+              type: "string",
+              enum: ["RELEVANT", "NOT_RELEVANT", "UNCERTAIN"],
+            },
+            suggestedRate: {
+              type: "number",
+            },
+            reason: {
+              type: "string",
+            },
+          },
+          required: ["relevance", "suggestedRate", "reason"],
+        },
+        wht: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            relevance: {
+              type: "string",
+              enum: ["RELEVANT", "NOT_RELEVANT", "UNCERTAIN"],
+            },
+            suggestedRate: {
+              type: "number",
+            },
+            reason: {
+              type: "string",
+            },
+          },
+          required: ["relevance", "suggestedRate", "reason"],
+        },
+        confidence: {
           type: "string",
-          enum: ["INCOME", "EXPENSE"],
+          enum: ["HIGH", "MEDIUM", "LOW"],
+        },
+        notes: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 5,
         },
       },
       required: [
         "amount",
-        "taxRate",
-        "date",
+        "classification",
+        "currency",
+        "transactionDate",
         "description",
-        "category",
+        "suggestedCategory",
         "vendorName",
-        "type",
+        "vat",
+        "wht",
+        "confidence",
+        "notes",
       ],
     };
 
     const prompt =
-      "Analyze this receipt image and extract the fields: amount, taxRate, " +
-      "date (YYYY-MM-DD), description, type (INCOME or EXPENSE), category, vendorName. " +
-      "If the tax rate is missing, set taxRate to 0. " +
-      "If the type is unclear, choose EXPENSE. " +
-      `${CATEGORY_GUIDANCE} ` +
-      "Category and vendorName are optional if not visible.";
+      "You are a bookkeeping extraction assistant for TaxBook AI, a Nigerian business bookkeeping product. " +
+      "Analyze the uploaded receipt or proof-of-payment image and return a conservative bookkeeping suggestion. " +
+      "Classify the transaction as INCOME or EXPENSE. " +
+      "Extract vendorName, amount, currency, transactionDate, description, and suggestedCategory when possible. " +
+      "Assess VAT and WHT relevance for Nigerian businesses. " +
+      "Use NGN if the currency is not visible. " +
+      `Use ${NIGERIA_TAX_CONFIG.vat.standardRate}% as the standard VAT rate when VAT clearly applies. ` +
+      "If the amount or date is unreadable, return null for that field rather than guessing. " +
+      "If the classification is unclear, choose EXPENSE. " +
+      `${BOOKKEEPING_CATEGORY_GUIDANCE} ` +
+      "Keep notes brief and practical.";
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -184,7 +265,37 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({ draft });
+    const suggestion = normalizeBookkeepingSuggestion(draft);
+    const legacyDraft = buildLegacyTaxRecordDraft(suggestion);
+    const metadata = {
+      version: 1 as const,
+      provider: "openai" as const,
+      route: "receipt-scan" as const,
+      model,
+      sourceType: "receipt-image" as const,
+      generatedAt: new Date().toISOString(),
+      fileName: file.name || null,
+      warnings: [] as string[],
+    };
+
+    await logAudit({
+      workspaceId: ctx.workspaceId,
+      actorUserId: ctx.userId,
+      action: "AI_BOOKKEEPING_SUGGESTION_GENERATED",
+      metadata: {
+        route: metadata.route,
+        sourceType: metadata.sourceType,
+        provider: metadata.provider,
+        confidence: suggestion.confidence,
+      },
+    });
+
+    return NextResponse.json({
+      available: true,
+      suggestion,
+      draft: legacyDraft,
+      metadata,
+    });
   } catch (error) {
     logRouteError("ai receipt scan failed", error, {
       workspaceId: ctx.workspaceId,

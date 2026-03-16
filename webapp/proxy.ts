@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/src/lib/session-constants";
 import { logRouteError } from "@/src/lib/logger";
+import { WORKSPACE_COOKIE_NAME } from "@/src/lib/workspaces";
 
 function redirectToLogin(req: NextRequest) {
   const nextPath = `${req.nextUrl.pathname}${req.nextUrl.search}`;
@@ -8,6 +9,7 @@ function redirectToLogin(req: NextRequest) {
   url.searchParams.set("next", nextPath);
   const res = NextResponse.redirect(url);
   res.cookies.set(SESSION_COOKIE_NAME, "", { maxAge: 0, path: "/" });
+  res.cookies.set(WORKSPACE_COOKIE_NAME, "", { maxAge: 0, path: "/" });
   return res;
 }
 

@@ -55,7 +55,7 @@ async function main() {
           },
           subscription: {
             create: {
-              plan: "FREE",
+              plan: "STARTER",
               status: "free",
             },
           },
@@ -69,7 +69,7 @@ async function main() {
       update: {},
       create: {
         workspaceId: membership.workspaceId,
-        plan: "FREE",
+        plan: "STARTER",
         status: "free",
       },
     });

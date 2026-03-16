@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import BookkeepingSuggestionCard from "./BookkeepingSuggestionCard";
 import TaxRecordForm, {
   TaxRecordFormValues,
 } from "./TaxRecordForm";
@@ -16,6 +17,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  type BookkeepingSourceType,
+  type BookkeepingSuggestion,
+  type BookkeepingSuggestionMetadata,
+  getSuggestedTaxRate,
+} from "@/src/lib/bookkeeping-ai";
+import { buildPendingTaxRecordAiMetadata } from "@/src/lib/tax-record-ai";
 
 type Role = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
 
@@ -43,6 +51,11 @@ type Category = {
 
 type Props = {
   role: Role;
+};
+
+type SuggestionResult = {
+  suggestion: BookkeepingSuggestion | null;
+  metadata: BookkeepingSuggestionMetadata;
 };
 
 const CATEGORY_ALIASES: Record<string, string> = {
@@ -77,6 +90,33 @@ function normalizeCategoryKey(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
+function normalizeDate(raw?: string | null) {
+  if (!raw) return new Date().toISOString().slice(0, 10);
+  const parsed = new Date(String(raw));
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString().slice(0, 10);
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function buildClientMetadataFallback(
+  route: "tax-record-draft" | "receipt-scan",
+  sourceType: BookkeepingSourceType,
+  warning: string,
+  fileName?: string | null
+): BookkeepingSuggestionMetadata {
+  return {
+    version: 1,
+    provider: "heuristic-fallback",
+    route,
+    model: null,
+    sourceType,
+    generatedAt: new Date().toISOString(),
+    warnings: [warning],
+    fileName: fileName ?? null,
+  };
+}
+
 export default function TaxRecordsClient({ role }: Props) {
   const router = useRouter();
   const [records, setRecords] = useState<TaxRecord[]>([]);
@@ -95,6 +135,10 @@ export default function TaxRecordsClient({ role }: Props) {
   const [imageLoading, setImageLoading] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageFileName, setImageFileName] = useState<string | null>(null);
+  const [suggestionResult, setSuggestionResult] = useState<SuggestionResult | null>(null);
+  const [approvedAiMetadata, setApprovedAiMetadata] = useState<
+    ReturnType<typeof buildPendingTaxRecordAiMetadata> | null
+  >(null);
 
   const canEdit = role === "OWNER" || role === "ADMIN" || role === "MEMBER";
 
@@ -166,6 +210,30 @@ export default function TaxRecordsClient({ role }: Props) {
     };
   }, [editingRecord, draftValues]);
 
+  function clearSuggestionState() {
+    setSuggestionResult(null);
+    setApprovedAiMetadata(null);
+  }
+
+  function buildFormValuesFromSuggestion(
+    suggestion: BookkeepingSuggestion
+  ): TaxRecordFormValues {
+    return {
+      kind: suggestion.classification,
+      amount:
+        typeof suggestion.amount === "number" && Number.isFinite(suggestion.amount)
+          ? suggestion.amount.toFixed(2)
+          : "",
+      taxRate: String(getSuggestedTaxRate(suggestion)),
+      occurredOn: normalizeDate(suggestion.transactionDate),
+      description: suggestion.description,
+      currency: suggestion.currency || "NGN",
+      categoryId: findCategoryIdByName(suggestion.suggestedCategory ?? ""),
+      vendorName: suggestion.vendorName ?? "",
+      recurring: false,
+    };
+  }
+
   async function handleSave(values: TaxRecordFormValues) {
     if (!canEdit) {
       setActionError("You have view-only access.");
@@ -188,6 +256,7 @@ export default function TaxRecordsClient({ role }: Props) {
       categoryId: parsedCategoryId,
       vendorName: values.vendorName,
       recurring: values.recurring,
+      aiMetadata: approvedAiMetadata ?? undefined,
     };
 
     try {
@@ -207,6 +276,9 @@ export default function TaxRecordsClient({ role }: Props) {
       setActionMsg(editingRecord ? "Record updated" : "Record created");
       setEditingRecord(null);
       setDraftValues(null);
+      clearSuggestionState();
+      setAiText("");
+      setImageFileName(null);
       await loadRecords();
     } catch {
       setActionError("Network error saving record");
@@ -247,8 +319,10 @@ export default function TaxRecordsClient({ role }: Props) {
     if (!canEdit) return;
     setEditingRecord(null);
     setDraftValues(null);
+    clearSuggestionState();
     setActionError(null);
     setActionMsg(null);
+    setAiError(null);
     setImageError(null);
     setImageFileName(null);
   }
@@ -264,21 +338,6 @@ export default function TaxRecordsClient({ role }: Props) {
     return match ? String(match.id) : "";
   }
 
-  function normalizeKind(kind?: unknown, taxType?: unknown) {
-    const candidate = String(kind ?? taxType ?? "INCOME").toUpperCase();
-    if (["INCOME", "EXPENSE", "VAT", "WHT"].includes(candidate)) return candidate;
-    return "INCOME";
-  }
-
-  function normalizeDate(raw?: unknown) {
-    if (!raw) return new Date().toISOString().slice(0, 10);
-    const parsed = new Date(String(raw));
-    if (Number.isNaN(parsed.getTime())) {
-      return new Date().toISOString().slice(0, 10);
-    }
-    return parsed.toISOString().slice(0, 10);
-  }
-
   async function handleAiDraft() {
     if (!canEdit) {
       setAiError("You have view-only access.");
@@ -292,6 +351,8 @@ export default function TaxRecordsClient({ role }: Props) {
     }
 
     setAiLoading(true);
+    setSuggestionResult(null);
+    setApprovedAiMetadata(null);
     try {
       const res = await fetch("/api/ai/tax-record-draft", {
         method: "POST",
@@ -303,24 +364,22 @@ export default function TaxRecordsClient({ role }: Props) {
         setAiError(data?.error ?? "Failed to generate draft");
         return;
       }
-
-      const draft = data?.draft ?? {};
-      const amountValue = Number(draft.amount);
-      const taxRateValue = Number(draft.suggestedTaxRate);
-
-      setEditingRecord(null);
-      setDraftValues({
-        kind: normalizeKind(draft.kind, draft.taxType),
-        amount: Number.isFinite(amountValue) ? amountValue.toFixed(2) : "",
-        taxRate: Number.isFinite(taxRateValue) ? String(taxRateValue) : "0",
-        occurredOn: normalizeDate(draft.date),
-        description: String(draft.description ?? ""),
-        currency: String(draft.currency ?? "NGN").toUpperCase(),
-        categoryId: findCategoryIdByName(String(draft.category ?? "")),
-        vendorName: String(draft.vendorName ?? ""),
-        recurring: false,
+      setApprovedAiMetadata(null);
+      setSuggestionResult({
+        suggestion: data?.suggestion ?? null,
+        metadata:
+          data?.metadata ??
+          buildClientMetadataFallback(
+            "tax-record-draft",
+            "text",
+            "The assistant response was incomplete. Review the draft carefully."
+          ),
       });
-      setActionMsg("Draft loaded from receipt text.");
+      setActionMsg(
+        data?.suggestion
+          ? "Bookkeeping suggestion ready. Review it and apply it if it looks correct."
+          : null
+      );
     } catch {
       setAiError("Network error generating draft");
     } finally {
@@ -341,6 +400,8 @@ export default function TaxRecordsClient({ role }: Props) {
     }
     setImageLoading(true);
     setImageFileName(file.name);
+    setSuggestionResult(null);
+    setApprovedAiMetadata(null);
 
     try {
       const formData = new FormData();
@@ -354,28 +415,57 @@ export default function TaxRecordsClient({ role }: Props) {
         setImageError(data?.error ?? "Failed to scan receipt");
         return;
       }
-
-      const draft = data?.draft ?? {};
-      const amountValue = Number(draft.amount);
-      const taxRateValue = Number(draft.taxRate);
-
-      setEditingRecord(null);
-      setDraftValues({
-        kind: normalizeKind(draft.type),
-        amount: Number.isFinite(amountValue) ? amountValue.toFixed(2) : "",
-        taxRate: Number.isFinite(taxRateValue) ? String(taxRateValue) : "0",
-        occurredOn: normalizeDate(draft.date),
-        description: String(draft.description ?? ""),
-        currency: String(draft.currency ?? "NGN").toUpperCase(),
-        categoryId: findCategoryIdByName(String(draft.category ?? "")),
-        vendorName: String(draft.vendorName ?? ""),
-        recurring: false,
+      setApprovedAiMetadata(null);
+      setSuggestionResult({
+        suggestion: data?.suggestion ?? null,
+        metadata:
+          data?.metadata ??
+          buildClientMetadataFallback(
+            "receipt-scan",
+            "receipt-image",
+            "The assistant response was incomplete. Review the draft carefully.",
+            file.name
+          ),
       });
-      setActionMsg("Draft loaded from receipt image.");
+      if (data?.suggestion) {
+        setActionMsg("Bookkeeping suggestion ready. Review it and apply it if it looks correct.");
+      } else {
+        setActionMsg(null);
+        setImageError(
+          data?.metadata?.warnings?.[0] ??
+            "Receipt image analysis is unavailable right now. Paste transaction text instead."
+        );
+      }
     } catch {
       setImageError("Network error scanning receipt");
     } finally {
       setImageLoading(false);
+    }
+  }
+
+  function handleApplySuggestion() {
+    if (!suggestionResult?.suggestion) return;
+
+    setEditingRecord(null);
+    setActionError(null);
+    setDraftValues(buildFormValuesFromSuggestion(suggestionResult.suggestion));
+    setApprovedAiMetadata(
+      buildPendingTaxRecordAiMetadata({
+        assistant: suggestionResult.metadata,
+        suggestion: suggestionResult.suggestion,
+        review: { appliedAt: new Date().toISOString() },
+      })
+    );
+    setActionMsg("AI suggestion applied. Review the form, then save the record.");
+  }
+
+  function handleDismissSuggestion() {
+    const wasApplied = Boolean(approvedAiMetadata);
+    clearSuggestionState();
+    if (wasApplied) {
+      setActionMsg(
+        "AI suggestion removed from the save payload. The form values are unchanged."
+      );
     }
   }
 
@@ -441,7 +531,9 @@ export default function TaxRecordsClient({ role }: Props) {
         <Card className="max-w-2xl">
           <CardHeader>
             <CardTitle>Upload receipt image</CardTitle>
-            <CardDescription>Automatically extract tax data from an image.</CardDescription>
+            <CardDescription>
+              Upload a receipt image and review structured bookkeeping suggestions.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Input
@@ -471,7 +563,9 @@ export default function TaxRecordsClient({ role }: Props) {
         <Card className="max-w-2xl">
           <CardHeader>
             <CardTitle>Paste receipt text</CardTitle>
-            <CardDescription>Generate a draft from pasted receipt text.</CardDescription>
+            <CardDescription>
+              Paste transaction text and generate structured bookkeeping suggestions.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <textarea
@@ -502,6 +596,18 @@ export default function TaxRecordsClient({ role }: Props) {
         </Card>
       )}
 
+      {canEdit && suggestionResult ? (
+        <BookkeepingSuggestionCard
+          suggestion={suggestionResult.suggestion}
+          metadata={suggestionResult.metadata}
+          applied={Boolean(approvedAiMetadata)}
+          onApply={
+            suggestionResult.suggestion ? handleApplySuggestion : undefined
+          }
+          onDismiss={handleDismissSuggestion}
+        />
+      ) : null}
+
       {!canEdit && (
         <Card className="max-w-2xl">
           <CardHeader>
@@ -530,6 +636,7 @@ export default function TaxRecordsClient({ role }: Props) {
                   setActionError(null);
                   setActionMsg(null);
                   setDraftValues(null);
+                  clearSuggestionState();
                   setEditingRecord(record);
                 }}
                 onDelete={handleDelete}

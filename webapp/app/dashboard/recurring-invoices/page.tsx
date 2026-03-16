@@ -1,11 +1,7 @@
 import { FeatureGateCard } from "@/components/billing/feature-gate-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { isRoleAtLeast, requireUser } from "@/src/lib/auth";
-import {
-  formatPlanPricePerMonth,
-  getPlanConfig,
-  getWorkspaceFeatureAccess,
-} from "@/src/lib/billing";
+import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import { listWorkspaceClients } from "@/src/lib/clients";
 import {
   listWorkspaceRecurringInvoices,
@@ -44,15 +40,13 @@ export default async function RecurringInvoicesPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Recurring invoices</h1>
           <p className="text-muted-foreground">
-            Automated repeat billing is available on Business and Accountant.
+            Growth unlocks invoice management and recurring billing workflows.
           </p>
         </div>
         <FeatureGateCard
-          featureName="Recurring invoices"
-          featureDescription="Schedule repeat billing, auto-generate invoices, and manage recurring collections."
-          currentPlanName={getPlanConfig(access.plan).name}
-          requiredPlanName={getPlanConfig(access.requiredPlan).name}
-          requiredPlanPrice={formatPlanPricePerMonth(access.requiredPlan)}
+          feature="RECURRING_INVOICES"
+          currentPlan={access.plan}
+          requiredPlan={access.requiredPlan}
         />
       </section>
     );
