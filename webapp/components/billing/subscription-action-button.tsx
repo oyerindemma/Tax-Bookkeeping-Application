@@ -50,7 +50,7 @@ function buildLabel(input: {
   if (input.loading) return "Redirecting...";
   if (input.plan === "ENTERPRISE") return "Contact Sales";
   if (input.plan === "STARTER") return "Start Free";
-  if (!input.loggedIn) return `Upgrade to ${input.planName}`;
+  if (!input.loggedIn) return `Get ${input.planName}`;
   if (!input.hasActiveWorkspace) return "Create workspace";
   return `Upgrade to ${input.planName}`;
 }

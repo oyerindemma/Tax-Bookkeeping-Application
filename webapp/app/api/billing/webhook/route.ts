@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
-import { logRouteError } from "@/src/lib/logger";
 import type { PaystackSubscriptionPayload, PaystackTransactionVerificationData } from "@/src/lib/paystack";
+import {
+  beginPaystackWebhookEvent,
+  markBillingWebhookEventFailed,
+  markBillingWebhookEventProcessed,
+} from "@/src/lib/billing-webhooks";
+import {
+  attachTraceId,
+  buildTraceErrorPayload,
+  createRouteLogger,
+} from "@/src/lib/observability";
 import { verifyPaystackSignature } from "@/src/lib/paystack";
 import {
   markWorkspaceSubscriptionStatusFromPaystackEvent,
@@ -17,76 +26,148 @@ type PaystackWebhookEvent = {
 };
 
 export async function POST(req: Request) {
+  const logger = createRouteLogger("/api/billing/webhook", req);
   const signature = req.headers.get("x-paystack-signature");
   const rawBody = await req.text();
 
   if (!verifyPaystackSignature(rawBody, signature)) {
-    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    logger.warn("signature verification failed");
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Invalid signature", logger.traceId), {
+        status: 401,
+      }),
+      logger.traceId
+    );
   }
 
   let event: PaystackWebhookEvent;
   try {
     event = JSON.parse(rawBody) as PaystackWebhookEvent;
   } catch {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    logger.warn("invalid json payload");
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Invalid payload", logger.traceId), {
+        status: 400,
+      }),
+      logger.traceId
+    );
   }
 
+  const eventType = String(event.event ?? "").trim().toLowerCase();
+  const webhookEvent = await beginPaystackWebhookEvent({
+    eventType: eventType || "unknown",
+    rawBody,
+    data: event.data,
+  });
+
+  if (webhookEvent.shouldSkip) {
+    logger.info("duplicate delivery skipped", {
+      eventType: eventType || "unknown",
+      webhookEventId: webhookEvent.event.id,
+      reason: webhookEvent.reason,
+    });
+    return attachTraceId(
+      NextResponse.json({
+        received: true,
+        duplicate: true,
+        eventType: eventType || "unknown",
+      }),
+      logger.traceId
+    );
+  }
+
+  let resolvedWorkspaceId: number | null = webhookEvent.event.workspaceId ?? null;
+
   try {
-    const eventType = String(event.event ?? "").trim().toLowerCase();
     switch (eventType) {
       case "charge.success": {
         const transaction = event.data as PaystackTransactionVerificationData;
-        await syncWorkspaceSubscriptionFromPaystackTransaction(
+        const synced = await syncWorkspaceSubscriptionFromPaystackTransaction(
           transaction,
           parseBillingMetadata(transaction.metadata).plan ?? null
         );
+        resolvedWorkspaceId = synced?.workspaceId ?? resolvedWorkspaceId;
         break;
       }
       case "subscription.create": {
-        await syncWorkspaceSubscriptionFromPaystackSubscription(
+        const synced = await syncWorkspaceSubscriptionFromPaystackSubscription(
           event.data as PaystackSubscriptionPayload,
           { statusHint: "active" }
         );
+        resolvedWorkspaceId = synced?.workspaceId ?? resolvedWorkspaceId;
         break;
       }
       case "subscription.enable": {
-        await syncWorkspaceSubscriptionFromPaystackSubscription(
+        const synced = await syncWorkspaceSubscriptionFromPaystackSubscription(
           event.data as PaystackSubscriptionPayload,
           { statusHint: "active" }
         );
+        resolvedWorkspaceId = synced?.workspaceId ?? resolvedWorkspaceId;
         break;
       }
       case "subscription.not_renew": {
-        await syncWorkspaceSubscriptionFromPaystackSubscription(
+        const synced = await syncWorkspaceSubscriptionFromPaystackSubscription(
           event.data as PaystackSubscriptionPayload,
           { statusHint: "non_renewing" }
         );
+        resolvedWorkspaceId = synced?.workspaceId ?? resolvedWorkspaceId;
         break;
       }
       case "subscription.disable": {
-        await syncWorkspaceSubscriptionFromPaystackSubscription(
+        const synced = await syncWorkspaceSubscriptionFromPaystackSubscription(
           event.data as PaystackSubscriptionPayload,
           { statusHint: "disabled" }
         );
+        resolvedWorkspaceId = synced?.workspaceId ?? resolvedWorkspaceId;
         break;
       }
       case "invoice.payment_failed":
       case "charge.failed": {
-        await markWorkspaceSubscriptionStatusFromPaystackEvent(
+        const synced = await markWorkspaceSubscriptionStatusFromPaystackEvent(
           event.data,
           "payment_failed"
         );
+        resolvedWorkspaceId = synced?.workspaceId ?? resolvedWorkspaceId;
         break;
       }
       default:
         break;
     }
-  } catch (error) {
-    logRouteError("billing webhook event handling failed", error, {
-      eventType: String(event.event ?? "unknown"),
+
+    await markBillingWebhookEventProcessed(
+      webhookEvent.event.id,
+      resolvedWorkspaceId ?? undefined
+    );
+    logger.info("webhook processed", {
+      eventType: eventType || "unknown",
+      webhookEventId: webhookEvent.event.id,
+      workspaceId: resolvedWorkspaceId,
+      duplicate: webhookEvent.duplicate,
     });
-    return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
+  } catch (error) {
+    await markBillingWebhookEventFailed(
+      webhookEvent.event.id,
+      error,
+      resolvedWorkspaceId ?? undefined
+    );
+    logger.error("event handling failed", error, {
+      eventType: eventType || "unknown",
+      webhookEventId: webhookEvent.event.id,
+      workspaceId: resolvedWorkspaceId,
+    });
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Webhook handler failed", logger.traceId), {
+        status: 500,
+      }),
+      logger.traceId
+    );
   }
 
-  return NextResponse.json({ received: true });
+  return attachTraceId(
+    NextResponse.json({
+      received: true,
+      eventType: eventType || "unknown",
+    }),
+    logger.traceId
+  );
 }

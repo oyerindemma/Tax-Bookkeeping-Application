@@ -3,6 +3,7 @@ import { FeatureGateCard } from "@/components/billing/feature-gate-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/src/lib/auth";
 import { getWorkspaceFeatureAccess } from "@/src/lib/billing";
+import { buildFinanceAssistantHomeState } from "@/src/lib/finance-assistant";
 import { getActiveWorkspaceMembership } from "@/src/lib/workspaces";
 import AssistantClient from "./_components/AssistantClient";
 
@@ -14,7 +15,7 @@ export default async function AssistantPage() {
     return (
       <section className="space-y-4">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">AI accounting assistant</h1>
+          <h1 className="text-2xl font-semibold">AI finance assistant</h1>
           <p className="text-muted-foreground">No workspace assigned.</p>
         </div>
         <Card>
@@ -34,7 +35,7 @@ export default async function AssistantPage() {
     return (
       <section className="space-y-6">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">AI accounting assistant</h1>
+          <h1 className="text-2xl font-semibold">AI finance assistant</h1>
           <p className="text-muted-foreground">
             Growth unlocks AI receipt scanning, bookkeeping automation, and assistant workflows.
           </p>
@@ -48,13 +49,18 @@ export default async function AssistantPage() {
     );
   }
 
+  const homeState = await buildFinanceAssistantHomeState({
+    workspaceId: membership.workspaceId,
+    role: membership.role,
+  });
+
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">AI accounting assistant</h1>
+          <h1 className="text-2xl font-semibold">AI finance assistant</h1>
           <p className="text-muted-foreground">
-            Ask grounded questions about invoices, VAT, receivables, and expenses.
+            Ask grounded questions about VAT, receivables, filings, anomalies, and reconciliation.
           </p>
           <p className="text-sm text-muted-foreground">
             Workspace:{" "}
@@ -63,10 +69,20 @@ export default async function AssistantPage() {
             </span>
           </p>
         </div>
-        <Badge variant="secondary">Workspace scoped</Badge>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="secondary">Workspace scoped</Badge>
+          <Badge variant={homeState.aiEnabled ? "outline" : "secondary"}>
+            {homeState.aiEnabled ? "Generative mode" : "Rules-only mode"}
+          </Badge>
+        </div>
       </div>
 
-      <AssistantClient workspaceName={membership.workspace.name} />
+      <AssistantClient
+        workspaceName={membership.workspace.name}
+        aiEnabled={homeState.aiEnabled}
+        quickInsights={homeState.quickInsights}
+        suggestedPrompts={homeState.suggestedPrompts}
+      />
     </section>
   );
 }

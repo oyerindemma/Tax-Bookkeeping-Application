@@ -1,7 +1,8 @@
+import { FeatureGateCard } from "@/components/billing/feature-gate-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/src/lib/auth";
 import { getWorkspaceBookkeepingMetrics } from "@/src/lib/accounting-firm";
-import { shouldBypassFeatureGate } from "@/src/lib/billing";
+import { getWorkspaceFeatureAccess, shouldBypassFeatureGate } from "@/src/lib/billing";
 import {
   listWorkspaceBookkeepingReviewUploads,
   listWorkspaceClientBusinessReviewOptions,
@@ -28,6 +29,26 @@ export default async function BookkeepingReviewPage() {
             </CardDescription>
           </CardHeader>
         </Card>
+      </section>
+    );
+  }
+
+  const access = await getWorkspaceFeatureAccess(membership.workspaceId, "AI_ASSISTANT");
+  if (!access.ok) {
+    return (
+      <section className="space-y-6">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold">Bookkeeping review</h1>
+          <p className="text-muted-foreground">
+            Growth unlocks AI receipt scanning, invoice capture, and the bookkeeping review queue.
+          </p>
+        </div>
+        <FeatureGateCard
+          feature="AI_ASSISTANT"
+          currentPlan={access.plan}
+          requiredPlan={access.requiredPlan}
+          note="Upload, extraction, duplicate detection, and accountant review stay on Growth and above."
+        />
       </section>
     );
   }

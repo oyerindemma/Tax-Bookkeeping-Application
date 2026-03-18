@@ -59,11 +59,14 @@ export function PublicNavbar() {
         </nav>
 
         <div className="hidden items-center gap-2 lg:flex">
+          <Button asChild variant="outline">
+            <Link href="/contact">Book Demo</Link>
+          </Button>
           <Button asChild variant="ghost">
             <Link href="/login">Login</Link>
           </Button>
           <Button asChild>
-            <Link href="/signup">Start Free Trial</Link>
+            <Link href="/signup">Start Free</Link>
           </Button>
         </div>
 
@@ -97,10 +100,10 @@ export function PublicNavbar() {
                 <Link href="/login">Login</Link>
               </Button>
               <Button asChild variant="outline" className="w-full">
-                <Link href="/contact">Contact Sales</Link>
+                <Link href="/contact">Book Demo</Link>
               </Button>
               <Button asChild className="w-full">
-                <Link href="/signup">Start Free Trial</Link>
+                <Link href="/signup">Start Free</Link>
               </Button>
             </div>
           </SheetContent>

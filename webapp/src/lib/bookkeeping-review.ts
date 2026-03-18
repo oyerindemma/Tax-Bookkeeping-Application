@@ -1,6 +1,11 @@
 import "server-only";
 
 import type { DraftReviewStatus, Prisma, PrismaClient } from "@prisma/client";
+import {
+  parseFieldConfidences,
+  parseLineItems,
+  parseReceiptScannerPayload,
+} from "@/src/lib/bookkeeping-receipts";
 import { prisma } from "@/src/lib/prisma";
 
 type PrismaExecutor = Prisma.TransactionClient | PrismaClient;
@@ -21,6 +26,7 @@ function buildDraftCounts(statuses: DraftReviewStatus[]) {
 }
 
 function serializeUpload(upload: Awaited<ReturnType<typeof fetchWorkspaceUploads>>[number]) {
+  const payload = parseReceiptScannerPayload(upload.aiPayload);
   const draftStatuses = upload.drafts.map((draft) => draft.reviewStatus);
   const draftCounts = buildDraftCounts(draftStatuses);
 
@@ -29,14 +35,35 @@ function serializeUpload(upload: Awaited<ReturnType<typeof fetchWorkspaceUploads
     fileName: upload.fileName,
     fileType: upload.fileType,
     sourceType: upload.sourceType,
+    documentType: upload.documentType,
     status: upload.status,
     uploadSizeBytes: upload.uploadSizeBytes,
     reviewNotes: upload.reviewNotes,
     rawText: upload.rawText,
     failureReason: upload.failureReason,
+    duplicateConfidence: upload.duplicateConfidence,
+    duplicateReason: upload.duplicateReason,
+    extractedAt: upload.extractedAt?.toISOString() ?? null,
     reviewedAt: upload.reviewedAt?.toISOString() ?? null,
     createdAt: upload.createdAt.toISOString(),
     updatedAt: upload.updatedAt.toISOString(),
+    previewUrl: `/api/bookkeeping/uploads/${upload.id}/file`,
+    assistant: {
+      provider: payload?.metadata.provider ?? null,
+      model: payload?.metadata.model ?? null,
+      warnings: payload?.metadata.warnings ?? [],
+      notes: payload?.extraction.notes ?? [],
+      historyNotes: payload?.historySuggestion.notes ?? [],
+    },
+    duplicateOfUpload: upload.duplicateOfUpload
+      ? {
+          id: upload.duplicateOfUpload.id,
+          fileName: upload.duplicateOfUpload.fileName,
+          createdAt: upload.duplicateOfUpload.createdAt.toISOString(),
+          status: upload.duplicateOfUpload.status,
+          clientBusinessName: upload.duplicateOfUpload.clientBusiness.name,
+        }
+      : null,
     clientBusiness: upload.clientBusiness,
     uploadedByName: upload.uploadedBy?.fullName ?? null,
     uploadedByEmail: upload.uploadedBy?.email ?? null,
@@ -48,12 +75,16 @@ function serializeUpload(upload: Awaited<ReturnType<typeof fetchWorkspaceUploads
       id: draft.id,
       description: draft.description,
       reference: draft.reference,
+      documentNumber: draft.documentNumber,
       vendorId: draft.vendorId,
       vendorName: draft.vendorName ?? draft.vendor?.name ?? null,
       categoryId: draft.categoryId,
       suggestedCategoryName: draft.suggestedCategoryName ?? draft.category?.name ?? null,
+      paymentMethod: draft.paymentMethod,
       direction: draft.direction,
+      subtotalMinor: draft.subtotalMinor,
       amountMinor: draft.amountMinor,
+      totalAmountMinor: draft.totalAmountMinor,
       taxAmountMinor: draft.taxAmountMinor,
       taxRate: draft.taxRate,
       currency: draft.currency,
@@ -62,6 +93,9 @@ function serializeUpload(upload: Awaited<ReturnType<typeof fetchWorkspaceUploads
       vatTreatment: draft.vatTreatment,
       whtTreatment: draft.whtTreatment,
       confidence: draft.confidence,
+      deductibilityHint: draft.deductibilityHint,
+      fieldConfidences: parseFieldConfidences(draft.fieldConfidencePayload),
+      lineItems: parseLineItems(draft.lineItemsPayload),
       reviewStatus: draft.reviewStatus,
       reviewerNote: draft.reviewerNote,
       proposedDate: draft.proposedDate?.toISOString() ?? null,
@@ -77,23 +111,39 @@ function serializeUpload(upload: Awaited<ReturnType<typeof fetchWorkspaceUploads
 async function fetchWorkspaceUploads(workspaceId: number) {
   return prisma.bookkeepingUpload.findMany({
     where: {
-      clientBusiness: {
-        workspaceId,
-      },
+      workspaceId,
     },
     select: {
       id: true,
       fileName: true,
       fileType: true,
       sourceType: true,
+      documentType: true,
       status: true,
       uploadSizeBytes: true,
       reviewNotes: true,
       rawText: true,
       failureReason: true,
+      duplicateConfidence: true,
+      duplicateReason: true,
+      extractedAt: true,
       reviewedAt: true,
       createdAt: true,
       updatedAt: true,
+      aiPayload: true,
+      duplicateOfUpload: {
+        select: {
+          id: true,
+          fileName: true,
+          createdAt: true,
+          status: true,
+          clientBusiness: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
       clientBusiness: {
         select: {
           id: true,
@@ -113,12 +163,16 @@ async function fetchWorkspaceUploads(workspaceId: number) {
           id: true,
           description: true,
           reference: true,
+          documentNumber: true,
           vendorId: true,
           vendorName: true,
           categoryId: true,
           suggestedCategoryName: true,
+          paymentMethod: true,
           direction: true,
+          subtotalMinor: true,
           amountMinor: true,
+          totalAmountMinor: true,
           taxAmountMinor: true,
           taxRate: true,
           currency: true,
@@ -127,6 +181,9 @@ async function fetchWorkspaceUploads(workspaceId: number) {
           vatTreatment: true,
           whtTreatment: true,
           confidence: true,
+          deductibilityHint: true,
+          fieldConfidencePayload: true,
+          lineItemsPayload: true,
           reviewStatus: true,
           reviewerNote: true,
           proposedDate: true,
@@ -170,26 +227,42 @@ export async function getWorkspaceBookkeepingReviewUpload(
   workspaceId: number,
   uploadId: number
 ) {
-  const uploads = await prisma.bookkeepingUpload.findMany({
+  const upload = await prisma.bookkeepingUpload.findFirst({
     where: {
       id: uploadId,
-      clientBusiness: {
-        workspaceId,
-      },
+      workspaceId,
     },
     select: {
       id: true,
       fileName: true,
       fileType: true,
       sourceType: true,
+      documentType: true,
       status: true,
       uploadSizeBytes: true,
       reviewNotes: true,
       rawText: true,
       failureReason: true,
+      duplicateConfidence: true,
+      duplicateReason: true,
+      extractedAt: true,
       reviewedAt: true,
       createdAt: true,
       updatedAt: true,
+      aiPayload: true,
+      duplicateOfUpload: {
+        select: {
+          id: true,
+          fileName: true,
+          createdAt: true,
+          status: true,
+          clientBusiness: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
       clientBusiness: {
         select: {
           id: true,
@@ -209,12 +282,16 @@ export async function getWorkspaceBookkeepingReviewUpload(
           id: true,
           description: true,
           reference: true,
+          documentNumber: true,
           vendorId: true,
           vendorName: true,
           categoryId: true,
           suggestedCategoryName: true,
+          paymentMethod: true,
           direction: true,
+          subtotalMinor: true,
           amountMinor: true,
+          totalAmountMinor: true,
           taxAmountMinor: true,
           taxRate: true,
           currency: true,
@@ -223,6 +300,9 @@ export async function getWorkspaceBookkeepingReviewUpload(
           vatTreatment: true,
           whtTreatment: true,
           confidence: true,
+          deductibilityHint: true,
+          fieldConfidencePayload: true,
+          lineItemsPayload: true,
           reviewStatus: true,
           reviewerNote: true,
           proposedDate: true,
@@ -254,7 +334,7 @@ export async function getWorkspaceBookkeepingReviewUpload(
     },
   });
 
-  return uploads[0] ? serializeUpload(uploads[0]) : null;
+  return upload ? serializeUpload(upload) : null;
 }
 
 export async function listWorkspaceClientBusinessReviewOptions(workspaceId: number) {
@@ -334,9 +414,7 @@ export async function findWorkspaceBookkeepingDraft(workspaceId: number, draftId
     where: {
       id: draftId,
       upload: {
-        clientBusiness: {
-          workspaceId,
-        },
+        workspaceId,
       },
     },
     include: {

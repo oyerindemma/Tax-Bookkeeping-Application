@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Mail, MapPin, PhoneCall } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MarketingCTAGroup } from "@/components/marketing/marketing-cta-group";
+import { ContactInquiryForm } from "@/components/marketing/contact-inquiry-form";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import {
@@ -19,80 +19,64 @@ import {
   CONTACT_PATHS,
   MARKETING_SUBHEADLINE,
 } from "@/components/marketing/site-content";
+import { buildMarketingMetadata } from "@/src/lib/marketing-metadata";
 
-export const metadata: Metadata = {
-  title: "Contact",
-  description: MARKETING_SUBHEADLINE,
-};
+export const metadata: Metadata = buildMarketingMetadata({
+  title: "Contact TaxBook AI in Lagos, Nigeria",
+  description:
+    "Contact TaxBook AI for demos, pricing conversations, and rollout support for Nigerian businesses, finance teams, and accounting firms.",
+  path: "/contact",
+  keywords: [
+    "AI accounting software Nigeria contact",
+    "bookkeeping software for accounting firms demo",
+    "Lagos accounting software",
+  ],
+});
 
 export default function ContactPage() {
   return (
     <MarketingShell backgroundClassName="bg-[radial-gradient(circle_at_top_right,rgba(57,118,88,0.14),transparent_26%),linear-gradient(180deg,#f8f4ea_0%,#f8fbf8_48%,#f3f6fb_100%)]">
-      <section className="mx-auto grid max-w-6xl gap-10 px-6 py-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] lg:items-center">
+      <section className="mx-auto grid max-w-6xl gap-10 px-6 py-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)] lg:items-center">
         <div className="space-y-5">
           <Badge variant="secondary" className="rounded-full px-4 py-1.5">
-            Contact sales
+            Lagos, Nigeria
           </Badge>
           <h1 className="text-5xl font-semibold tracking-tight text-balance">
-            Talk to the team about launch, rollout, or a live product walkthrough.
+            Book a demo, ask a pricing question, or plan your rollout with the team.
           </h1>
           <p className="max-w-2xl text-lg leading-8 text-muted-foreground">
             {MARKETING_SUBHEADLINE}
           </p>
           <p className="max-w-2xl text-base leading-7 text-muted-foreground">
-            Whether you are evaluating TaxBook for one business or several client workspaces, we
-            can walk through the operating model, pricing fit, and launch path.
+            Whether you are evaluating TaxBook AI for one business, a finance team, or a client
+            portfolio, we can walk through workflow fit, plan structure, tax workflow expectations,
+            and the cleanest next rollout step.
           </p>
           <div className="flex flex-wrap gap-3">
             <Button asChild size="lg">
+              <a href={`mailto:${COMPANY_DETAILS.email}?subject=Book%20a%20TaxBook%20Demo`}>
+                Book Demo
+              </a>
+            </Button>
+            <Button asChild size="lg" variant="outline">
               <a href={`mailto:${COMPANY_DETAILS.email}?subject=TaxBook%20Sales%20Inquiry`}>
                 Email Sales
               </a>
             </Button>
-            <MarketingCTAGroup
-              compact
-              showContactSales={false}
-              showViewPricing
-            />
+            <Button asChild size="lg" variant="ghost">
+              <a href={`tel:${COMPANY_DETAILS.phone.replace(/\s+/g, "")}`}>Call Lagos Team</a>
+            </Button>
           </div>
         </div>
 
-        <Card className="border-border/60 bg-white/85 shadow-sm">
-          <CardHeader>
-            <CardTitle>Direct contact</CardTitle>
-            <CardDescription>
-              Use these launch channels for product, pricing, and rollout conversations.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <div className="flex items-center gap-3 rounded-2xl border bg-background px-4 py-3">
-              <Mail className="size-4 text-primary" />
-              <a href={`mailto:${COMPANY_DETAILS.email}`} className="font-medium">
-                {COMPANY_DETAILS.email}
-              </a>
-            </div>
-            <div className="flex items-center gap-3 rounded-2xl border bg-background px-4 py-3">
-              <PhoneCall className="size-4 text-primary" />
-              <a href={`tel:${COMPANY_DETAILS.phone.replace(/\s+/g, "")}`} className="font-medium">
-                {COMPANY_DETAILS.phone}
-              </a>
-            </div>
-            <div className="flex items-center gap-3 rounded-2xl border bg-background px-4 py-3">
-              <MapPin className="size-4 text-primary" />
-              <span className="font-medium">{COMPANY_DETAILS.location}</span>
-            </div>
-            <div className="rounded-2xl border border-dashed bg-background px-4 py-4 text-muted-foreground">
-              Response target: within one business day for launch and sales enquiries.
-            </div>
-          </CardContent>
-        </Card>
+        <ContactInquiryForm />
       </section>
 
       <section className="mx-auto max-w-6xl px-6 py-16">
         <SectionHeading
-          badge="How we can help"
-          title="Pick the conversation that matches your next step."
-          description="These are the main public paths for launch conversations, demos, and onboarding support."
+          badge="Talk to us about"
+          title="Choose the conversation that matches your next step."
+          description="These are the most common public paths into TaxBook AI."
         />
         <div className="mt-10 grid gap-4 lg:grid-cols-3">
           {CONTACT_PATHS.map((item) => {
@@ -127,11 +111,11 @@ export default function ContactPage() {
                   What to expect
                 </Badge>
                 <h2 className="text-3xl font-semibold tracking-tight">
-                  Launch conversations stay focused on workflow fit.
+                  The best conversations stay anchored to your current finance workflow.
                 </h2>
                 <p className="text-slate-300">
-                  The best demo sessions are tied to your current invoicing, expense capture,
-                  reporting, and workspace structure.
+                  We usually start by understanding how you handle bookkeeping review, bank
+                  reconciliation, invoicing, and tax visibility today.
                 </p>
               </div>
               <div className="grid gap-3">
@@ -146,9 +130,9 @@ export default function ContactPage() {
 
           <Card className="border-border/60 bg-white/85">
             <CardHeader>
-              <CardTitle>What to bring to the conversation</CardTitle>
+              <CardTitle>What to send us</CardTitle>
               <CardDescription>
-                A little context makes the walkthrough far more useful.
+                A little context helps us make the demo or pricing conversation useful.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4">
@@ -184,11 +168,11 @@ export default function ContactPage() {
                 Prefer to explore first?
               </Badge>
               <h2 className="text-3xl font-semibold tracking-tight">
-                Start with the product, then come back when you need rollout support.
+                Start on Starter, review pricing, then come back when you want rollout help.
               </h2>
               <p className="max-w-2xl text-muted-foreground">
-                You can self-serve into Starter, review pricing, or log in if you already
-                have access.
+                You can self-serve into the product, compare plans, or log in if your workspace is
+                already set up.
               </p>
             </div>
             <MarketingCTAGroup compact showContactSales={false} />

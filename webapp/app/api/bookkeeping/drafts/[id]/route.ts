@@ -110,9 +110,13 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     const description = normalizeString(body.description) || draft.description || "";
     const reference = normalizeString(body.reference) || draft.reference || draft.upload.fileName;
+    const documentNumber =
+      normalizeString(body.documentNumber) || draft.documentNumber || null;
     const vendorName = normalizeString(body.vendorName) || draft.vendorName || null;
     const suggestedCategoryName =
       normalizeString(body.suggestedCategoryName) || draft.suggestedCategoryName || null;
+    const paymentMethod =
+      normalizeString(body.paymentMethod) || draft.paymentMethod || null;
     const currency = (normalizeString(body.currency) || draft.currency || "NGN").toUpperCase();
     const suggestedType = normalizeSuggestedType(body.suggestedType);
     const direction = deriveLedgerDirection(suggestedType);
@@ -122,12 +126,15 @@ export async function PATCH(req: Request, context: RouteContext) {
       normalizeDateInput(body.transactionDate) ??
       draft.proposedDate ??
       new Date();
+    const subtotal = normalizeNumber(body.subtotal);
     const amount = normalizeNumber(body.amount);
     const taxAmount = normalizeNumber(body.taxAmount);
     const vatAmount = normalizeNumber(body.vatAmount);
     const whtAmount = normalizeNumber(body.whtAmount);
     const taxRate = Math.max(0, normalizeNumber(body.taxRate) ?? draft.taxRate ?? 0);
     const reviewerNote = normalizeString(body.reviewerNote) || null;
+    const deductibilityHint =
+      normalizeString(body.deductibilityHint) || draft.deductibilityHint || null;
     const categoryId =
       typeof body.categoryId === "number"
         ? body.categoryId
@@ -161,6 +168,12 @@ export async function PATCH(req: Request, context: RouteContext) {
       });
 
       const amountMinor = amount !== null ? toMinorUnits(amount) : draft.amountMinor;
+      const subtotalMinor =
+        subtotal !== null ? toMinorUnits(subtotal) : draft.subtotalMinor;
+      const totalAmountMinor =
+        amount !== null
+          ? toMinorUnits(amount)
+          : draft.totalAmountMinor ?? draft.amountMinor;
       const taxAmountMinor = taxAmount !== null ? toMinorUnits(taxAmount) : draft.taxAmountMinor;
       const vatAmountMinor =
         vatAmount !== null
@@ -190,7 +203,7 @@ export async function PATCH(req: Request, context: RouteContext) {
             description,
             reference: reference || null,
             direction,
-            amountMinor: amountMinor ?? 0,
+            amountMinor: totalAmountMinor ?? amountMinor ?? 0,
             currency,
             vatAmountMinor: vatAmountMinor ?? 0,
             whtAmountMinor: whtAmountMinor ?? 0,
@@ -214,10 +227,14 @@ export async function PATCH(req: Request, context: RouteContext) {
           proposedDate,
           description,
           reference: reference || null,
+          documentNumber,
           vendorName,
           suggestedCategoryName,
+          paymentMethod,
           direction,
+          subtotalMinor,
           amountMinor,
+          totalAmountMinor,
           taxAmountMinor,
           taxRate,
           currency,
@@ -226,6 +243,7 @@ export async function PATCH(req: Request, context: RouteContext) {
           vatTreatment,
           whtTreatment,
           reviewStatus: action === "approve" ? "APPROVED" : "REJECTED",
+          deductibilityHint,
           reviewerNote,
           reviewedAt: reviewTimestamp,
           approvedAt: action === "approve" ? reviewTimestamp : null,

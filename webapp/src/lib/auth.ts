@@ -10,7 +10,7 @@ import {
   SESSION_TTL_DAYS,
   SESSION_MAX_AGE_SECONDS,
 } from "@/src/lib/session-constants";
-import { getAppUrl } from "@/src/lib/env";
+import { getAppUrl, getOptionalSessionCookieDomain } from "@/src/lib/env";
 import { prisma } from "@/src/lib/prisma";
 import { WORKSPACE_COOKIE_NAME } from "@/src/lib/workspaces";
 
@@ -34,12 +34,15 @@ export type SessionUser = Prisma.UserGetPayload<{
 }>;
 
 export function buildSessionCookieOptions(expiresAt?: Date) {
+  const domain = getOptionalSessionCookieDomain();
+
   return {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax" as const,
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
+    ...(domain ? { domain } : {}),
     ...(expiresAt ? { expires: expiresAt } : {}),
   };
 }

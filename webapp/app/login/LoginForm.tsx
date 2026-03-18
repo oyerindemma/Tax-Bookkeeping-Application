@@ -73,11 +73,11 @@ export default function LoginForm() {
             Login
           </Badge>
           <h1 className="text-5xl font-semibold tracking-tight text-balance">
-            Return to your accounting workspace.
+            Return to your TaxBook AI workspace.
           </h1>
           <p className="max-w-2xl text-lg leading-8 text-muted-foreground">
-            Pick up invoices, expenses, taxes, receipts, and reports right where your team left
-            them.
+            Pick up bookkeeping review, invoices, bank reconciliation, tax visibility, and reports
+            right where your team left them.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <Card className="border-border/60 bg-white/80 shadow-sm">
@@ -89,7 +89,7 @@ export default function LoginForm() {
             <Card className="border-border/60 bg-white/80 shadow-sm">
               <CardHeader className="pb-3">
                 <CardDescription>Operational continuity</CardDescription>
-                <CardTitle className="text-lg">Audit-ready history</CardTitle>
+                <CardTitle className="text-lg">Audit-friendly history</CardTitle>
               </CardHeader>
             </Card>
           </div>
@@ -99,7 +99,7 @@ export default function LoginForm() {
           <CardHeader>
             <CardTitle>Sign in</CardTitle>
             <CardDescription>
-              Use the email and password associated with your TaxBook account.
+              Use the email and password associated with your TaxBook AI account.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -164,7 +164,7 @@ export default function LoginForm() {
                   href="/signup"
                   className="font-medium text-foreground underline-offset-4 hover:underline"
                 >
-                  Start with Free
+                  Start Free
                 </Link>
               </p>
               <p>

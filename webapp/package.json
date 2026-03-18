@@ -12,13 +12,18 @@
     "prisma:generate:local": "prisma generate --schema prisma/schema.prisma",
     "prisma:generate:production": "prisma generate --schema prisma/postgres/schema.prisma",
     "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:deploy:production": "prisma migrate deploy --schema prisma/postgres/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "prisma:migrate:status:local": "prisma migrate status --schema prisma/schema.prisma",
+    "prisma:migrate:status:production": "prisma migrate status --schema prisma/postgres/schema.prisma",
     "prisma:db:push": "prisma db push --schema prisma/schema.prisma",
     "prisma:db:push:production": "prisma db push --schema prisma/postgres/schema.prisma",
-    "vercel-build": "npm run build",
+    "vercel-build": "npm run env:check && npm run build",
     "backfill:workspaces": "node prisma/scripts/backfill-workspaces.mjs",
     "seed:demo": "node prisma/scripts/seed-demo.mjs",
-    "env:check": "node prisma/scripts/check-env.mjs"
+    "env:check": "node prisma/scripts/check-env.mjs",
+    "env:check:strict": "node prisma/scripts/check-env.mjs --strict",
+    "health:check": "node prisma/scripts/health-check.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",

@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TaxBook AI Webapp
 
-## Getting Started
+TaxBook AI is a Nigeria-first accounting SaaS for businesses, finance teams, and accounting firms. The private app already includes workspace management, invoicing, AI bookkeeping capture, bank reconciliation, tax summaries, billing, and accountant review workflows.
 
-First, run the development server:
+## Local Development
+
+1. Copy `.env.example` to `.env`
+2. Keep local development on SQLite unless you are explicitly testing Postgres or Neon
+3. Run:
 
 ```bash
+npm install
+npm run env:check
+npm run prisma:generate:local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Useful commands:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run lint
+npm run build
+npm run health:check
+npm run prisma:migrate:status:local
+npm run prisma:migrate:deploy
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Production Deployment
 
-## Learn More
+Production deployment guidance lives in [docs/production-deployment.md](./docs/production-deployment.md).
 
-To learn more about Next.js, take a look at the following resources:
+That runbook covers:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Vercel environment variables by environment
+- Neon pooled vs direct connection strings
+- Prisma migration flow for SQLite and Postgres
+- Paystack webhook setup and hardening
+- Production smoke tests after deploy
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Notes
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Local billing stub mode is allowed only outside production.
+- Production health checks are available at `/api/health?strict=1`.
+- If Paystack keys were ever shared in sample env files, rotate them before go-live.

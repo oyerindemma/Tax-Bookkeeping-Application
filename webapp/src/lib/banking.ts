@@ -295,6 +295,7 @@ export type SerializedBankingDashboard = {
   accounts: Array<{
     id: number;
     name: string;
+    accountName: string;
     bankName: string;
     accountNumber: string;
     currency: string;
@@ -327,12 +328,23 @@ export type SerializedBankingDashboard = {
     bankAccount: {
       id: number;
       name: string;
+      accountName: string;
     };
     clientBusiness: {
       id: number;
       name: string;
     } | null;
     uploadedByName: string | null;
+  }>;
+  invoiceOptions: Array<{
+    id: number;
+    invoiceNumber: string;
+    clientName: string;
+    status: string;
+    totalAmount: number;
+    paymentReference: string | null;
+    issueDate: string;
+    dueDate: string;
   }>;
   transactions: SerializedBankTransaction[];
   summary: {
@@ -359,6 +371,7 @@ export type SerializedBankTransaction = {
   bankAccount: {
     id: number;
     name: string;
+    accountName: string;
     bankName: string;
     accountNumber: string;
     currency: string;
@@ -377,6 +390,8 @@ export type SerializedBankTransaction = {
     duplicateCount: number;
     failedCount: number;
   } | null;
+  matchedLedgerEntryId: number | null;
+  matchedInvoiceId: number | null;
   categorization: {
     suggestedType: BankTransactionBusinessType;
     counterpartyName: string | null;
@@ -479,6 +494,12 @@ type CreateLedgerInput = {
   vatAmountMinor?: number | null;
   whtAmountMinor?: number | null;
   notes?: string | null;
+};
+
+type LinkInvoiceInput = {
+  transactionId: number;
+  invoiceId: number;
+  clientBusinessId?: number | null;
 };
 
 type SplitLineInput = {
@@ -2254,6 +2275,7 @@ function serializeTransaction(
   });
 
   const approvedMatch = transaction.matches.find((match) => match.status === "APPROVED") ?? null;
+  const serializedApprovedMatch = approvedMatch ? serializeMatch(approvedMatch) : null;
   const suggestions = transaction.matches.filter((match) => match.status === "SUGGESTED");
 
   return {
@@ -2273,6 +2295,7 @@ function serializeTransaction(
     bankAccount: {
       id: transaction.bankAccount.id,
       name: transaction.bankAccount.name,
+      accountName: transaction.bankAccount.name,
       bankName: transaction.bankAccount.bankName,
       accountNumber: transaction.bankAccount.accountNumber,
       currency: transaction.bankAccount.currency,
@@ -2295,6 +2318,16 @@ function serializeTransaction(
           failedCount: transaction.statementImport.failedCount,
         }
       : null,
+    matchedLedgerEntryId:
+      transaction.matchedLedgerTransactionId ??
+      (serializedApprovedMatch?.target.kind === "LEDGER_TRANSACTION"
+        ? serializedApprovedMatch.target.linkedId
+        : null),
+    matchedInvoiceId:
+      transaction.matchedInvoiceId ??
+      (serializedApprovedMatch?.target.kind === "INVOICE"
+        ? serializedApprovedMatch.target.linkedId
+        : null),
     categorization: {
       suggestedType: transaction.suggestedType,
       counterpartyName: transaction.suggestedCounterparty,
@@ -2309,7 +2342,7 @@ function serializeTransaction(
       vatRate: taxSignals.vatRate,
       whtRate: taxSignals.whtRate,
     },
-    approvedMatch: approvedMatch ? serializeMatch(approvedMatch) : null,
+    approvedMatch: serializedApprovedMatch,
     suggestions: suggestions.map((match) => serializeMatch(match)),
     splitLines: transaction.splitLines.map((line) => ({
       id: line.id,
@@ -2457,34 +2490,32 @@ async function createPostedLedgerTransaction(
 
 export async function createWorkspaceBankAccount(input: {
   workspaceId: number;
-  clientBusinessId?: number | null;
-  name: string;
+  clientBusinessId: number;
+  accountName: string;
   bankName: string;
   accountNumber: string;
   currency?: string | null;
 }) {
-  const clientBusinessId = input.clientBusinessId ?? null;
-  if (clientBusinessId) {
-    const business = await prisma.clientBusiness.findFirst({
-      where: {
-        id: clientBusinessId,
-        workspaceId: input.workspaceId,
-      },
-      select: {
-        id: true,
-      },
-    });
+  const business = await prisma.clientBusiness.findFirst({
+    where: {
+      id: input.clientBusinessId,
+      workspaceId: input.workspaceId,
+      archivedAt: null,
+    },
+    select: {
+      id: true,
+    },
+  });
 
-    if (!business) {
-      throw new Error("Client business not found for the selected workspace");
-    }
+  if (!business) {
+    throw new Error("Client business not found for the selected workspace");
   }
 
   return prisma.bankAccount.create({
     data: {
       workspaceId: input.workspaceId,
-      clientBusinessId,
-      name: normalizeString(input.name),
+      clientBusinessId: input.clientBusinessId,
+      name: normalizeString(input.accountName),
       bankName: normalizeString(input.bankName),
       accountNumber: normalizeString(input.accountNumber),
       currency: normalizeString(input.currency).toUpperCase() || "NGN",
@@ -2727,7 +2758,7 @@ export async function getWorkspaceBankingDashboard(input: {
   importId?: number | null;
   query?: string | null;
 }) {
-  const [accounts, clientBusinesses, imports, transactions] = await Promise.all([
+  const [accounts, clientBusinesses, imports, transactions, invoiceOptions] = await Promise.all([
     prisma.bankAccount.findMany({
       where: {
         workspaceId: input.workspaceId,
@@ -2783,6 +2814,31 @@ export async function getWorkspaceBankingDashboard(input: {
       take: 120,
       include: bankTransactionInclude,
     }),
+    prisma.invoice.findMany({
+      where: {
+        workspaceId: input.workspaceId,
+        status: {
+          in: ["SENT", "OVERDUE"],
+        },
+      },
+      orderBy: [{ dueDate: "asc" }, { issueDate: "desc" }],
+      take: 40,
+      select: {
+        id: true,
+        invoiceNumber: true,
+        status: true,
+        totalAmount: true,
+        paymentReference: true,
+        issueDate: true,
+        dueDate: true,
+        client: {
+          select: {
+            name: true,
+            companyName: true,
+          },
+        },
+      },
+    }),
   ]);
 
   const filteredTransactions = normalizeString(input.query)
@@ -2817,6 +2873,7 @@ export async function getWorkspaceBankingDashboard(input: {
     accounts: accounts.map((account) => ({
       id: account.id,
       name: account.name,
+      accountName: account.name,
       bankName: account.bankName,
       accountNumber: account.accountNumber,
       currency: account.currency,
@@ -2837,9 +2894,22 @@ export async function getWorkspaceBankingDashboard(input: {
       duplicateCount: statementImport.duplicateCount,
       failedCount: statementImport.failedCount,
       warningCount: statementImport.warningCount,
-      bankAccount: statementImport.bankAccount,
+      bankAccount: {
+        ...statementImport.bankAccount,
+        accountName: statementImport.bankAccount.name,
+      },
       clientBusiness: statementImport.clientBusiness,
       uploadedByName: statementImport.uploadedBy?.fullName ?? null,
+    })),
+    invoiceOptions: invoiceOptions.map((invoice) => ({
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      clientName: invoice.client.companyName ?? invoice.client.name,
+      status: invoice.status,
+      totalAmount: invoice.totalAmount,
+      paymentReference: invoice.paymentReference ?? null,
+      issueDate: invoice.issueDate.toISOString(),
+      dueDate: invoice.dueDate.toISOString(),
     })),
     transactions: filteredTransactions.map((transaction) => serializeTransaction(transaction)),
     summary: {
@@ -2910,6 +2980,9 @@ export async function updateBankTransactionClassification(input: {
         suggestedWhtTreatment: input.whtTreatment ?? undefined,
         reviewNotes: input.notes === undefined ? undefined : normalizeString(input.notes) || null,
         status: "UNMATCHED",
+        matchedLedgerTransactionId: null,
+        matchedInvoiceId: null,
+        matchedAt: null,
         ignoredAt: null,
       },
     });
@@ -2962,6 +3035,8 @@ export async function ignoreBankTransaction(input: {
       },
       data: {
         status: "IGNORED",
+        matchedLedgerTransactionId: null,
+        matchedInvoiceId: null,
         ignoredAt: new Date(),
         matchedAt: null,
       },
@@ -3193,12 +3268,17 @@ export async function approveReconciliationMatch(input: {
 
     await markOnlyApprovedMatch(tx, match.bankTransactionId, approved.id);
 
+    const matchedLedgerTransactionId = createdLedgerTransactionId ?? match.ledgerTransactionId ?? null;
+    const matchedInvoiceId = match.invoiceId ?? null;
+
     await tx.bankTransaction.update({
       where: {
         id: match.bankTransactionId,
       },
       data: {
         status: "MATCHED",
+        matchedLedgerTransactionId,
+        matchedInvoiceId,
         matchedAt: now,
         ignoredAt: null,
       },
@@ -3299,6 +3379,8 @@ export async function createManualLedgerMatch(input: {
       data: {
         clientBusinessId,
         status: "MATCHED",
+        matchedLedgerTransactionId: ledgerTransaction.id,
+        matchedInvoiceId: null,
         matchedAt: new Date(),
         ignoredAt: null,
       },
@@ -3314,6 +3396,138 @@ export async function createManualLedgerMatch(input: {
     },
     include: bankTransactionInclude,
   });
+}
+
+export async function linkBankTransactionToInvoice(input: {
+  workspaceId: number;
+  actorUserId: number;
+  payload: LinkInvoiceInput;
+}) {
+  const matchId = await prisma.$transaction(async (tx) => {
+    const bankTransaction = await tx.bankTransaction.findFirst({
+      where: {
+        id: input.payload.transactionId,
+        workspaceId: input.workspaceId,
+      },
+      select: {
+        id: true,
+        type: true,
+        amount: true,
+        clientBusinessId: true,
+      },
+    });
+
+    if (!bankTransaction) {
+      throw new Error("Bank transaction not found");
+    }
+
+    if (bankTransaction.type !== "CREDIT") {
+      throw new Error("Only credit transactions can be linked directly to an invoice");
+    }
+
+    const invoice = await tx.invoice.findFirst({
+      where: {
+        id: input.payload.invoiceId,
+        workspaceId: input.workspaceId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!invoice) {
+      throw new Error("Invoice not found");
+    }
+
+    const clientBusinessId = input.payload.clientBusinessId ?? bankTransaction.clientBusinessId;
+    if (!clientBusinessId) {
+      throw new Error("Select a client business before linking the invoice");
+    }
+
+    const business = await tx.clientBusiness.findFirst({
+      where: {
+        id: clientBusinessId,
+        workspaceId: input.workspaceId,
+        archivedAt: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!business) {
+      throw new Error("Client business not found");
+    }
+
+    await tx.bankTransaction.update({
+      where: {
+        id: bankTransaction.id,
+      },
+      data: {
+        clientBusinessId,
+        status: "UNMATCHED",
+        matchedLedgerTransactionId: null,
+        matchedInvoiceId: null,
+        matchedAt: null,
+        ignoredAt: null,
+      },
+    });
+
+    const existingMatch = await tx.reconciliationMatch.findFirst({
+      where: {
+        workspaceId: input.workspaceId,
+        bankTransactionId: bankTransaction.id,
+        invoiceId: invoice.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingMatch) {
+      await tx.reconciliationMatch.update({
+        where: {
+          id: existingMatch.id,
+        },
+        data: {
+          status: "SUGGESTED",
+          score: 1,
+          matchedAmountMinor: bankTransaction.amount,
+          rationale: "Invoice linked manually from reconciliation review",
+          approvedAt: null,
+          approvedByUserId: null,
+        },
+      });
+
+      return existingMatch.id;
+    }
+
+    const createdMatch = await tx.reconciliationMatch.create({
+      data: {
+        workspaceId: input.workspaceId,
+        bankTransactionId: bankTransaction.id,
+        invoiceId: invoice.id,
+        matchType: "INVOICE",
+        status: "SUGGESTED",
+        score: 1,
+        matchedAmountMinor: bankTransaction.amount,
+        rationale: "Invoice linked manually from reconciliation review",
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return createdMatch.id;
+  });
+
+  const match = await approveReconciliationMatch({
+    workspaceId: input.workspaceId,
+    actorUserId: input.actorUserId,
+    matchId,
+  });
+
+  return match?.bankTransaction ?? null;
 }
 
 export async function splitBankTransaction(input: {
@@ -3452,6 +3666,8 @@ export async function splitBankTransaction(input: {
       data: {
         clientBusinessId,
         status: "SPLIT",
+        matchedLedgerTransactionId: null,
+        matchedInvoiceId: null,
         matchedAt: new Date(),
         ignoredAt: null,
       },

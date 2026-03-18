@@ -24,6 +24,7 @@ type WhtTreatment = "NONE" | "PAYABLE" | "RECEIVABLE";
 type BankAccount = {
   id: number;
   name: string;
+  accountName: string;
   bankName: string;
   accountNumber: string;
   currency: string;
@@ -58,6 +59,7 @@ type ImportHistory = {
   bankAccount: {
     id: number;
     name: string;
+    accountName: string;
   };
   clientBusiness: {
     id: number;
@@ -103,6 +105,7 @@ type Transaction = {
   bankAccount: {
     id: number;
     name: string;
+    accountName: string;
     bankName: string;
     accountNumber: string;
     currency: string;
@@ -121,6 +124,8 @@ type Transaction = {
     duplicateCount: number;
     failedCount: number;
   } | null;
+  matchedLedgerEntryId: number | null;
+  matchedInvoiceId: number | null;
   categorization: {
     suggestedType: SuggestedType;
     counterpartyName: string | null;
@@ -158,6 +163,16 @@ type DashboardResponse = {
   accounts: BankAccount[];
   clientBusinesses: ClientBusiness[];
   imports: ImportHistory[];
+  invoiceOptions: Array<{
+    id: number;
+    invoiceNumber: string;
+    clientName: string;
+    status: string;
+    totalAmount: number;
+    paymentReference: string | null;
+    issueDate: string;
+    dueDate: string;
+  }>;
   transactions: Transaction[];
   summary: {
     total: number;
@@ -176,7 +191,7 @@ type PreviewResponse = {
 };
 
 type AccountForm = {
-  name: string;
+  accountName: string;
   bankName: string;
   accountNumber: string;
   currency: string;
@@ -204,6 +219,7 @@ type TransactionForm = {
   vatAmount: string;
   whtAmount: string;
   notes: string;
+  invoiceId: string;
   splitLines: Array<{
     description: string;
     reference: string;
@@ -461,6 +477,10 @@ function statusLabel(status: string) {
 }
 
 function buildTransactionForm(transaction: Transaction): TransactionForm {
+  const bestInvoiceSuggestion = transaction.suggestions.find(
+    (suggestion) => suggestion.matchType === "INVOICE" && suggestion.target.linkedId
+  );
+
   return {
     clientBusinessId: transaction.clientBusiness ? String(transaction.clientBusiness.id) : "",
     description: transaction.description,
@@ -474,6 +494,11 @@ function buildTransactionForm(transaction: Transaction): TransactionForm {
     vatAmount: "",
     whtAmount: "",
     notes: transaction.reviewNotes ?? transaction.categorization.narrationMeaning ?? "",
+    invoiceId: transaction.matchedInvoiceId
+      ? String(transaction.matchedInvoiceId)
+      : bestInvoiceSuggestion?.target.linkedId
+        ? String(bestInvoiceSuggestion.target.linkedId)
+        : "",
     splitLines: [
       {
         description: transaction.description,
@@ -528,7 +553,7 @@ export default function ReconcileClient({
   const [message, setMessage] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(() => buildInitialFilters());
   const [accountForm, setAccountForm] = useState<AccountForm>({
-    name: "",
+    accountName: "",
     bankName: "",
     accountNumber: "",
     currency: "NGN",
@@ -626,7 +651,7 @@ export default function ReconcileClient({
       }
 
       setAccountForm({
-        name: "",
+        accountName: "",
         bankName: "",
         accountNumber: "",
         currency: "NGN",
@@ -863,7 +888,7 @@ export default function ReconcileClient({
 
   async function runTransactionAction(
     transactionId: number,
-    action: "reclassify" | "create_ledger" | "ignore" | "split",
+    action: "reclassify" | "create_ledger" | "ignore" | "split" | "link_invoice",
     payload?: Record<string, unknown>
   ) {
     if (!editable || workingTransactionId) return;
@@ -894,6 +919,8 @@ export default function ReconcileClient({
           ? "Transaction ignored."
           : action === "split"
             ? "Transaction split and posted."
+            : action === "link_invoice"
+              ? "Invoice linked and posted."
             : action === "create_ledger"
               ? "Ledger transaction created."
               : "Classification updated."
@@ -942,6 +969,12 @@ export default function ReconcileClient({
   const accounts = dashboard?.accounts ?? [];
   const clientBusinesses = dashboard?.clientBusinesses ?? [];
   const imports = dashboard?.imports ?? [];
+  const invoiceOptions = dashboard?.invoiceOptions ?? [];
+  const importAccounts = selectedBusinessId
+    ? accounts.filter(
+        (account) => String(account.clientBusinessId ?? "") === selectedBusinessId
+      )
+    : accounts;
   const mappingFields = FIELD_OPTIONS.filter(
     (option): option is { key: MappingFieldKey; label: string } => option.key !== ""
   );
@@ -1075,8 +1108,12 @@ export default function ReconcileClient({
                   const account = accounts.find(
                     (candidate) => candidate.clientBusinessId === businessId
                   );
-                  if ((!selectedAccountId || account?.id !== Number(selectedAccountId)) && account) {
-                    setSelectedAccountId(String(account.id));
+                  if (account) {
+                    if (!selectedAccountId || account.id !== Number(selectedAccountId)) {
+                      setSelectedAccountId(String(account.id));
+                    }
+                  } else {
+                    setSelectedAccountId("");
                   }
                 }}
                 disabled={!editable}
@@ -1100,9 +1137,9 @@ export default function ReconcileClient({
                   disabled={!editable}
                 >
                   <option value="">Select an account</option>
-                  {accounts.map((account) => (
+                  {importAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
-                      {account.name} · {account.bankName}
+                      {account.accountName} · {account.bankName}
                     </option>
                   ))}
                 </select>
@@ -1399,9 +1436,12 @@ export default function ReconcileClient({
                 <Label htmlFor="accountName">Account name</Label>
                 <Input
                   id="accountName"
-                  value={accountForm.name}
+                  value={accountForm.accountName}
                   onChange={(event) =>
-                    setAccountForm((current) => ({ ...current, name: event.target.value }))
+                    setAccountForm((current) => ({
+                      ...current,
+                      accountName: event.target.value,
+                    }))
                   }
                   disabled={!editable}
                   placeholder="Main operating account"
@@ -1482,7 +1522,7 @@ export default function ReconcileClient({
               ) : (
                 accounts.map((account) => (
                   <div key={account.id} className="rounded-md border border-slate-200 px-3 py-3">
-                    <div className="font-medium">{account.name}</div>
+                    <div className="font-medium">{account.accountName}</div>
                     <div className="text-sm text-muted-foreground">
                       {account.bankName} · {account.accountNumber} · {account.currency}
                     </div>
@@ -1582,7 +1622,7 @@ export default function ReconcileClient({
                 <option value="">All accounts</option>
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.name}
+                    {account.accountName}
                   </option>
                 ))}
               </select>
@@ -1715,6 +1755,9 @@ export default function ReconcileClient({
             const splitTotalMinor = sumSplitLineAmounts(form.splitLines);
             const splitDifferenceMinor = transaction.amountMinor - splitTotalMinor;
             const splitBalanced = splitDifferenceMinor === 0;
+            const manualLedgerLabel =
+              transaction.type === "DEBIT" ? "Create expense" : "Create income entry";
+            const canLinkInvoice = transaction.type === "CREDIT";
 
             return (
               <Card key={transaction.id}>
@@ -1920,8 +1963,8 @@ export default function ReconcileClient({
                       <div className="text-sm font-medium">Reconciliation suggestions</div>
                       {transaction.suggestions.length === 0 ? (
                         <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                          No strong suggestions yet. Reclassify this line, create a manual ledger
-                          entry, or split it before posting.
+                          No strong suggestions yet. Reclassify this line, create an expense or
+                          ledger entry, link an invoice, or split it before posting.
                         </div>
                       ) : (
                         <div className="space-y-3">
@@ -1997,7 +2040,7 @@ export default function ReconcileClient({
 
                   {actionable ? (
                     <div className="space-y-4">
-                      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+                      <div className="grid gap-4 xl:grid-cols-3">
                         <details
                           {...(transaction.suggestions.length === 0 ||
                           transaction.status === "REVIEW_REQUIRED"
@@ -2159,7 +2202,7 @@ export default function ReconcileClient({
                           className="rounded-lg border border-slate-200 p-4"
                         >
                           <summary className="cursor-pointer list-none text-sm font-medium">
-                            Post manually
+                            Create expense or ledger entry
                           </summary>
                           <div className="mt-4 space-y-4">
                             <div className="grid gap-3 md:grid-cols-2">
@@ -2231,8 +2274,64 @@ export default function ReconcileClient({
                               }
                               disabled={!editable || anyTransactionBusy}
                             >
-                              {transactionBusy ? "Posting..." : "Create new ledger transaction"}
+                              {transactionBusy ? "Posting..." : manualLedgerLabel}
                             </Button>
+                          </div>
+                        </details>
+
+                        <details
+                          {...(bestSuggestion?.matchType === "INVOICE" ? { open: true } : {})}
+                          className="rounded-lg border border-slate-200 p-4"
+                        >
+                          <summary className="cursor-pointer list-none text-sm font-medium">
+                            Link invoice
+                          </summary>
+                          <div className="mt-4 space-y-4">
+                            <div className="grid gap-2">
+                              <Label htmlFor={`invoice-${transaction.id}`}>Open invoice</Label>
+                              <select
+                                id={`invoice-${transaction.id}`}
+                                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                                value={form.invoiceId}
+                                onChange={(event) =>
+                                  updateForm(transaction.id, "invoiceId", event.target.value)
+                                }
+                                disabled={!editable}
+                              >
+                                <option value="">Select an invoice</option>
+                                {invoiceOptions.map((invoice) => (
+                                  <option key={invoice.id} value={invoice.id}>
+                                    {invoice.invoiceNumber} · {invoice.clientName} ·{" "}
+                                    {formatMoney(invoice.totalAmount, transaction.currency)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="text-xs text-muted-foreground">
+                              Linking invoices is available for credit transactions and will post
+                              the receipt into revenue while marking the invoice paid.
+                            </div>
+
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                runTransactionAction(transaction.id, "link_invoice", {
+                                  clientBusinessId: form.clientBusinessId || null,
+                                  invoiceId: form.invoiceId || null,
+                                })
+                              }
+                              disabled={!editable || anyTransactionBusy || !canLinkInvoice || !form.invoiceId}
+                            >
+                              {transactionBusy ? "Linking..." : "Link invoice"}
+                            </Button>
+
+                            {!canLinkInvoice ? (
+                              <div className="text-xs text-amber-700">
+                                Only credit transactions can be linked directly to invoices.
+                              </div>
+                            ) : null}
                           </div>
                         </details>
                       </div>

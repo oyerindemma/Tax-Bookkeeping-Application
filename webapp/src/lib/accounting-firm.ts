@@ -235,8 +235,10 @@ export async function listWorkspaceClientBusinesses(workspaceId: number) {
 
 export async function getWorkspaceBookkeepingMetrics(workspaceId: number) {
   const activeUploadStatuses: BookkeepingUploadStatus[] = [
+    "UPLOADED",
     "QUEUED",
     "PROCESSING",
+    "EXTRACTED",
     "READY_FOR_REVIEW",
   ];
   const reviewStatuses: DraftReviewStatus[] = ["PENDING", "NEEDS_INFO"];

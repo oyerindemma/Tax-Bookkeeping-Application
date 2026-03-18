@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import {
-  ADD_ON_CONFIG,
   ensureWorkspaceSubscription,
   formatAiScanLimit,
   formatAnnualSavings,
@@ -14,6 +13,7 @@ import {
 } from "@/src/lib/billing";
 import { getUserFromSession } from "@/src/lib/auth";
 import { getActiveWorkspaceMembership } from "@/src/lib/workspaces";
+import { buildMarketingMetadata } from "@/src/lib/marketing-metadata";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,10 +23,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { MarketingCTAGroup } from "@/components/marketing/marketing-cta-group";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { PricingGrid } from "@/components/marketing/pricing-grid";
 import { SectionHeading } from "@/components/marketing/section-heading";
-import { PRICING_FAQ, PRICING_INCLUSIONS } from "@/components/marketing/site-content";
+import {
+  PLAN_DECISION_GUIDE,
+  PRICING_FAQ,
+  PRICING_INCLUSIONS,
+} from "@/components/marketing/site-content";
 
 type SearchParams = {
   interval?: string | string[];
@@ -49,14 +54,15 @@ function resolveInterval(value: string | string[] | undefined): BillingInterval 
 const comparisonRows: ComparisonRow[] = [
   {
     label: "Subscription",
-    getValue: (plan: PlanKey, interval: BillingInterval) => formatPlanPricePerInterval(plan, interval),
+    getValue: (plan: PlanKey, interval: BillingInterval) =>
+      formatPlanPricePerInterval(plan, interval),
   },
   {
-    label: "Businesses",
+    label: "Client businesses",
     getValue: (plan: PlanKey) => formatLimit(getPlanConfig(plan).maxBusinesses),
   },
   {
-    label: "Users",
+    label: "Workspace users",
     getValue: (plan: PlanKey) => formatLimit(getPlanConfig(plan).maxUsers),
   },
   {
@@ -64,27 +70,27 @@ const comparisonRows: ComparisonRow[] = [
     getValue: (plan: PlanKey) => formatAiScanLimit(getPlanConfig(plan).aiScansPerMonth),
   },
   {
-    label: "Manual bookkeeping and VAT summary",
+    label: "Manual bookkeeping and reporting",
     getValue: () => "Included",
   },
   {
-    label: "AI receipt scanning and bookkeeping automation",
+    label: "AI receipt scanning and bookkeeping review",
     getValue: (plan: PlanKey) => (isPlanAtLeast(plan, "GROWTH") ? "Included" : "Locked"),
   },
   {
-    label: "Invoice management and recurring billing",
+    label: "Invoices and recurring billing",
     getValue: (plan: PlanKey) => (isPlanAtLeast(plan, "GROWTH") ? "Included" : "Locked"),
   },
   {
-    label: "Bank statement AI reconciliation",
+    label: "Bank reconciliation",
     getValue: (plan: PlanKey) => (isPlanAtLeast(plan, "PROFESSIONAL") ? "Included" : "Locked"),
   },
   {
-    label: "Audit logs, tax filing assistant, and team collaboration",
+    label: "Audit logs, team workflows, filing-ready tax workflows",
     getValue: (plan: PlanKey) => (isPlanAtLeast(plan, "PROFESSIONAL") ? "Included" : "Locked"),
   },
   {
-    label: "API integrations and priority support",
+    label: "Integrations and priority support",
     getValue: (plan: PlanKey) => (plan === "ENTERPRISE" ? "Included" : "Locked"),
   },
   {
@@ -93,13 +99,17 @@ const comparisonRows: ComparisonRow[] = [
   },
 ];
 
-const annualToggleHref = "/pricing?interval=annual";
-const monthlyToggleHref = "/pricing?interval=monthly";
-
-export const metadata: Metadata = {
-  title: "Pricing",
-  description: "Choose a TaxBook AI subscription for Nigerian businesses and accounting firms.",
-};
+export const metadata: Metadata = buildMarketingMetadata({
+  title: "Pricing for AI Accounting Software in Nigeria",
+  description:
+    "See TaxBook AI pricing for Starter, Growth, Professional, and Enterprise, with monthly and annual billing for Nigerian businesses and accounting firms.",
+  path: "/pricing",
+  keywords: [
+    "AI accounting software pricing Nigeria",
+    "bookkeeping software for accounting firms",
+    "VAT and WHT automation pricing",
+  ],
+});
 
 export default async function PricingPage({
   searchParams,
@@ -116,42 +126,47 @@ export default async function PricingPage({
 
   return (
     <MarketingShell backgroundClassName="bg-[radial-gradient(circle_at_top,rgba(212,168,84,0.18),transparent_24%),linear-gradient(180deg,#f8f4ea_0%,#fcfbf8_42%,#f2f7f2_100%)]">
-      <section className="mx-auto grid max-w-6xl gap-10 px-6 py-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] lg:items-center">
+      <section className="mx-auto grid max-w-6xl gap-10 px-6 py-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)] lg:items-center">
         <div className="space-y-5">
           <Badge variant="secondary" className="rounded-full px-4 py-1.5">
             Pricing
           </Badge>
           <h1 className="text-5xl font-semibold tracking-tight text-balance">
-            Starter, Growth, Professional, and Enterprise pricing for real accounting workflows.
+            Start free, then unlock AI capture and reconciliation as the workload grows.
           </h1>
           <p className="max-w-2xl text-lg leading-8 text-muted-foreground">
-            TaxBook AI is priced for Nigerian businesses and accounting firms that need a path from
-            manual bookkeeping into AI capture, reconciliation, and advanced tax workflows.
+            TaxBook AI pricing is built for Nigerian businesses and accounting firms that need a
+            path from manual bookkeeping into AI-assisted capture, bank reconciliation, filing-ready
+            tax workflows, and stronger finance controls.
           </p>
           <p className="max-w-2xl text-base leading-7 text-muted-foreground">
             {membership
               ? `Active workspace: ${membership.workspace.name}. Current plan: ${getPlanConfig(
                   subscription?.plan ?? "STARTER"
                 ).name}.`
-              : "Start on Starter for free, then move into Growth or Professional when you need AI, banking, or team workflows."}
+              : "Starter covers manual bookkeeping and reporting. Growth unlocks AI receipt scanning. Professional unlocks bank reconciliation, audit-friendly review, and team workflows."}
+          </p>
+          <p className="max-w-2xl text-sm leading-7 text-muted-foreground">
+            Enterprise remains contact-sales only for larger rollouts, integrations, and priority
+            onboarding support.
           </p>
           <div className="flex flex-wrap gap-3">
             <Button asChild variant={interval === "MONTHLY" ? "default" : "outline"}>
-              <Link href={monthlyToggleHref}>Monthly</Link>
+              <Link href="/pricing?interval=monthly">Monthly</Link>
             </Button>
             <Button asChild variant={interval === "ANNUAL" ? "default" : "outline"}>
-              <Link href={annualToggleHref}>Annual</Link>
+              <Link href="/pricing?interval=annual">Annual</Link>
             </Button>
-            <Badge variant="outline">20% annual savings already reflected</Badge>
+            <Badge variant="outline">Annual pricing already reflects a 20% discount</Badge>
           </div>
         </div>
 
         <Card className="border-border/60 bg-white/85 shadow-sm">
           <CardHeader>
-            <CardTitle>What every workspace gets</CardTitle>
+            <CardTitle>Every workspace starts from the same operating foundation</CardTitle>
             <CardDescription>
-              Start with bookkeeping fundamentals, then unlock automation and controls as the firm
-              grows.
+              The difference between plans is not whether the system is usable. It is how much
+              automation, control, and scale you need.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 text-sm text-muted-foreground">
@@ -167,8 +182,8 @@ export default async function PricingPage({
       <section className="mx-auto max-w-6xl px-6 py-16">
         <SectionHeading
           badge="Workspace plans"
-          title="Pick the plan that matches the volume and control level you need today."
-          description="Annual prices already include the 20% savings versus paying monthly for twelve months."
+          title="Pick the plan that matches your control level today."
+          description="Monthly and annual pricing mirror the current billing logic. Enterprise remains contact-sales only."
         />
         <div className="mt-10">
           <PricingGrid
@@ -183,9 +198,41 @@ export default async function PricingPage({
 
       <section className="mx-auto max-w-6xl px-6 py-16">
         <SectionHeading
+          badge="Upgrade guide"
+          title="The simplest way to think about plan fit."
+          description="These are the moments teams usually feel the need to upgrade."
+        />
+        <div className="mt-10 grid gap-4 lg:grid-cols-3">
+          {PLAN_DECISION_GUIDE.map((item) => {
+            const Icon = item.icon;
+
+            return (
+              <Card key={item.title} className="border-border/60 bg-white/85">
+                <CardHeader className="space-y-4">
+                  <div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <Icon className="size-5" />
+                  </div>
+                  <div className="space-y-2">
+                    <CardTitle className="text-xl">{item.title}</CardTitle>
+                    <CardDescription className="leading-6">{item.description}</CardDescription>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <Badge variant="secondary" className="rounded-full px-3 py-1">
+                    {item.cta}
+                  </Badge>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-6 py-16">
+        <SectionHeading
           badge="Plan comparison"
           title="See the exact capacity and workflow unlocks on each plan."
-          description="The product stays usable from Starter, then adds AI, reconciliation, collaboration, and enterprise controls as you move up."
+          description="This table mirrors the pricing logic already used inside the billing flow."
         />
         <Card className="mt-10 border-border/60 bg-white/85">
           <CardContent className="overflow-x-auto p-0">
@@ -227,42 +274,10 @@ export default async function PricingPage({
 
       <section className="mx-auto max-w-6xl px-6 py-16">
         <SectionHeading
-          badge="Add-on ready"
-          title="Add-ons are structured now, with checkout wiring still to come."
-          description="This keeps Enterprise and future overage pricing clear without turning on partial billing flows prematurely."
-        />
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
-          {Object.values(ADD_ON_CONFIG).map((item) => (
-            <Card key={item.id} className="border-border/60 bg-white/85">
-              <CardHeader>
-                <CardTitle className="text-xl">{item.name}</CardTitle>
-                <CardDescription>{item.description}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                <div className="font-semibold">
-                  {item.monthlyPriceKobo === 0
-                    ? "Included"
-                    : `${(item.monthlyPriceKobo / 100).toLocaleString("en-NG", {
-                        style: "currency",
-                        currency: "NGN",
-                        maximumFractionDigits: 0,
-                      })} ${item.unitLabel}`}
-                </div>
-                <p className="text-muted-foreground">
-                  Placeholder only for now. Self-serve add-on checkout still needs wiring.
-                </p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-6 py-16">
-        <SectionHeading
           badge="FAQ"
           title="Answers to the questions teams ask before subscribing."
         />
-        <div className="mt-10 grid gap-4 lg:grid-cols-3">
+        <div className="mt-10 grid gap-4 lg:grid-cols-2">
           {PRICING_FAQ.map((item) => (
             <Card key={item.question} className="border-border/60 bg-white/85">
               <CardHeader>
@@ -272,6 +287,26 @@ export default async function PricingPage({
             </Card>
           ))}
         </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-6 py-16">
+        <Card className="border-border/60 bg-white/85 shadow-sm">
+          <CardContent className="flex flex-col gap-6 p-8 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-3">
+              <Badge variant="secondary" className="rounded-full px-4 py-1.5">
+                Need help choosing?
+              </Badge>
+              <h2 className="text-3xl font-semibold tracking-tight">
+                Start with Starter, or talk through the right rollout for your team.
+              </h2>
+              <p className="max-w-2xl text-muted-foreground">
+                Pricing is built around real workflow unlocks, so a quick conversation can save a
+                slow rollout later.
+              </p>
+            </div>
+            <MarketingCTAGroup compact />
+          </CardContent>
+        </Card>
       </section>
     </MarketingShell>
   );

@@ -8,7 +8,12 @@ import {
   validateEmail,
   verifyPassword,
 } from "@/src/lib/auth";
-import { logRouteError } from "@/src/lib/logger";
+import {
+  attachTraceId,
+  buildTraceErrorPayload,
+  createRouteLogger,
+  hashForLogs,
+} from "@/src/lib/observability";
 import { prisma } from "@/src/lib/prisma";
 import {
   buildWorkspaceCookieOptions,
@@ -45,16 +50,27 @@ function buildValidationError(body: LoginBody) {
 }
 
 export async function POST(req: Request) {
+  const logger = createRouteLogger("/api/login", req);
+
   try {
     const body = (await req.json()) as LoginBody;
     const validationError = buildValidationError(body);
+    const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
 
     if (validationError) {
-      return NextResponse.json(validationError, { status: 400 });
+      logger.warn("validation failed", {
+        emailHash: email ? hashForLogs(email) : null,
+      });
+      return attachTraceId(
+        NextResponse.json(validationError, { status: 400 }),
+        logger.traceId
+      );
     }
 
-    const email = normalizeEmail(body.email ?? "");
     const password = body.password ?? "";
+    logger.info("login attempt", {
+      emailHash: hashForLogs(email),
+    });
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -68,17 +84,25 @@ export async function POST(req: Request) {
     });
 
     if (!user) {
-      return NextResponse.json(
-        { error: "Invalid email or password." },
-        { status: 401 }
+      logger.warn("login rejected", {
+        emailHash: hashForLogs(email),
+        reason: "missing_user",
+      });
+      return attachTraceId(
+        NextResponse.json({ error: "Invalid email or password." }, { status: 401 }),
+        logger.traceId
       );
     }
 
     const passwordMatches = await verifyPassword(password, user.password);
     if (!passwordMatches) {
-      return NextResponse.json(
-        { error: "Invalid email or password." },
-        { status: 401 }
+      logger.warn("login rejected", {
+        emailHash: hashForLogs(email),
+        reason: "invalid_password",
+      });
+      return attachTraceId(
+        NextResponse.json({ error: "Invalid email or password." }, { status: 401 }),
+        logger.traceId
       );
     }
 
@@ -147,12 +171,22 @@ export async function POST(req: Request) {
       );
     }
 
-    return res;
+    logger.info("login completed", {
+      userId: user.id,
+      workspaceId,
+    });
+    return attachTraceId(res, logger.traceId);
   } catch (error) {
-    logRouteError("login failed", error);
-    return NextResponse.json(
-      { error: "We could not log you in right now. Please try again." },
-      { status: 500 }
+    logger.error("login failed", error);
+    return attachTraceId(
+      NextResponse.json(
+        buildTraceErrorPayload(
+          "We could not log you in right now. Please try again.",
+          logger.traceId
+        ),
+        { status: 500 }
+      ),
+      logger.traceId
     );
   }
 }

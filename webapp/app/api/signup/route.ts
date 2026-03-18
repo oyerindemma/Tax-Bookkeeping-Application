@@ -12,7 +12,12 @@ import {
   validateFullName,
   validatePassword,
 } from "@/src/lib/auth";
-import { logRouteError } from "@/src/lib/logger";
+import {
+  attachTraceId,
+  buildTraceErrorPayload,
+  createRouteLogger,
+  hashForLogs,
+} from "@/src/lib/observability";
 import { prisma } from "@/src/lib/prisma";
 import {
   buildWorkspaceCookieOptions,
@@ -65,17 +70,28 @@ function buildValidationError(body: SignupBody) {
 }
 
 export async function POST(req: Request) {
+  const logger = createRouteLogger("/api/signup", req);
+
   try {
     const body = (await req.json()) as SignupBody;
     const validationError = buildValidationError(body);
+    const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
 
     if (validationError) {
-      return NextResponse.json(validationError, { status: 400 });
+      logger.warn("validation failed", {
+        emailHash: email ? hashForLogs(email) : null,
+      });
+      return attachTraceId(
+        NextResponse.json(validationError, { status: 400 }),
+        logger.traceId
+      );
     }
 
-    const email = normalizeEmail(body.email ?? "");
     const fullName = normalizeFullName(body.fullName ?? "");
     const passwordHash = await hashPassword(body.password ?? "");
+    logger.info("signup attempt", {
+      emailHash: hashForLogs(email),
+    });
 
     const existing = await prisma.user.findUnique({
       where: { email },
@@ -83,14 +99,20 @@ export async function POST(req: Request) {
     });
 
     if (existing) {
-      return NextResponse.json(
-        {
-          error: "An account already exists for that email. Log in instead.",
-          fieldErrors: {
-            email: "An account already exists for this email address.",
+      logger.warn("duplicate email rejected", {
+        emailHash: hashForLogs(email),
+      });
+      return attachTraceId(
+        NextResponse.json(
+          {
+            error: "An account already exists for that email. Log in instead.",
+            fieldErrors: {
+              email: "An account already exists for this email address.",
+            },
           },
-        },
-        { status: 409 }
+          { status: 409 }
+        ),
+        logger.traceId
       );
     }
 
@@ -152,28 +174,42 @@ export async function POST(req: Request) {
       String(user.workspaceId),
       buildWorkspaceCookieOptions()
     );
+    logger.info("signup completed", {
+      userId: user.user.id,
+      workspaceId: user.workspaceId,
+    });
 
-    return res;
+    return attachTraceId(res, logger.traceId);
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      return NextResponse.json(
-        {
-          error: "An account already exists for that email. Log in instead.",
-          fieldErrors: {
-            email: "An account already exists for this email address.",
+      logger.warn("duplicate email race rejected");
+      return attachTraceId(
+        NextResponse.json(
+          {
+            error: "An account already exists for that email. Log in instead.",
+            fieldErrors: {
+              email: "An account already exists for this email address.",
+            },
           },
-        },
-        { status: 409 }
+          { status: 409 }
+        ),
+        logger.traceId
       );
     }
 
-    logRouteError("signup failed", error);
-    return NextResponse.json(
-      { error: "We could not create your account right now. Please try again." },
-      { status: 500 }
+    logger.error("signup failed", error);
+    return attachTraceId(
+      NextResponse.json(
+        buildTraceErrorPayload(
+          "We could not create your account right now. Please try again.",
+          logger.traceId
+        ),
+        { status: 500 }
+      ),
+      logger.traceId
     );
   }
 }

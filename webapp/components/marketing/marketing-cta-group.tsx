@@ -34,7 +34,7 @@ export function MarketingCTAGroup({
         className={tone === "inverse" ? "bg-white text-slate-950 hover:bg-white/90" : undefined}
       >
         <Link href="/signup">
-          Start Free Trial
+          Start Free
           <ArrowRight className="size-4" />
         </Link>
       </Button>
@@ -57,7 +57,7 @@ export function MarketingCTAGroup({
           variant="outline"
           className={tone === "inverse" ? inverseOutlineClassName : undefined}
         >
-          <Link href="/contact">Contact Sales</Link>
+          <Link href="/contact">Book Demo</Link>
         </Button>
       )}
 

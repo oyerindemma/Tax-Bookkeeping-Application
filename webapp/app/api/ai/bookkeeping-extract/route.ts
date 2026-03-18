@@ -1,9 +1,11 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { getAuthContext, requireRoleAtLeast } from "@/src/lib/auth";
 import { logAudit } from "@/src/lib/audit";
 import { enforceAiScanLimit, getWorkspaceFeatureAccess } from "@/src/lib/billing";
 import {
   buildFallbackBookkeepingExtraction,
+  buildImageMetadataFallbackExtraction,
   buildStoredDraftAmounts,
   deriveLedgerDirection,
   deriveUploadSourceType,
@@ -14,9 +16,18 @@ import {
   MAX_BOOKKEEPING_PDF_BYTES,
   SUPPORTED_BOOKKEEPING_MIME_TYPES,
 } from "@/src/lib/bookkeeping-extract";
+import {
+  buildReceiptScannerPayload,
+  buildWorkspaceHistorySuggestion,
+  detectDuplicateBookkeepingUpload,
+} from "@/src/lib/bookkeeping-receipts";
 import { getWorkspaceBookkeepingReviewUpload } from "@/src/lib/bookkeeping-review";
 import { hasOpenAiServerConfig } from "@/src/lib/env";
-import { logRouteError } from "@/src/lib/logger";
+import {
+  attachTraceId,
+  buildTraceErrorPayload,
+  createRouteLogger,
+} from "@/src/lib/observability";
 import { prisma } from "@/src/lib/prisma";
 
 export const runtime = "nodejs";
@@ -27,60 +38,64 @@ function isSupportedMimeType(fileType: string) {
   );
 }
 
-function matchExistingCategoryId(
-  categories: Array<{ id: number; name: string }>,
-  suggestedCategoryName: string | null
-) {
-  const normalized = suggestedCategoryName?.trim().toLowerCase();
-  if (!normalized) return null;
-  return (
-    categories.find((category) => category.name.trim().toLowerCase() === normalized)?.id ??
-    null
-  );
-}
-
-function matchExistingVendorId(
-  vendors: Array<{ id: number; name: string }>,
-  vendorName: string | null
-) {
-  const normalized = vendorName?.trim().toLowerCase();
-  if (!normalized) return null;
-  return vendors.find((vendor) => vendor.name.trim().toLowerCase() === normalized)?.id ?? null;
+function mergeNotes(...noteLists: Array<string[] | undefined>) {
+  const unique = new Set<string>();
+  for (const list of noteLists) {
+    for (const note of list ?? []) {
+      const normalized = typeof note === "string" ? note.trim() : "";
+      if (normalized) unique.add(normalized);
+    }
+  }
+  return Array.from(unique).slice(0, 10);
 }
 
 export async function POST(req: Request) {
+  const logger = createRouteLogger("/api/ai/bookkeeping-extract", req);
   const ctx = await getAuthContext();
   if (!ctx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return attachTraceId(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      logger.traceId
+    );
   }
 
   const auth = await requireRoleAtLeast(ctx.workspaceId, "MEMBER");
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status });
+    return attachTraceId(
+      NextResponse.json({ error: auth.error }, { status: auth.status }),
+      logger.traceId
+    );
   }
 
   const featureAccess = await getWorkspaceFeatureAccess(ctx.workspaceId, "AI_ASSISTANT");
   if (!featureAccess.ok) {
-    return NextResponse.json(
-      {
-        error: featureAccess.error,
-        currentPlan: featureAccess.plan,
-        requiredPlan: featureAccess.requiredPlan,
-      },
-      { status: 402 }
+    return attachTraceId(
+      NextResponse.json(
+        {
+          error: featureAccess.error,
+          currentPlan: featureAccess.plan,
+          requiredPlan: featureAccess.requiredPlan,
+        },
+        { status: 402 }
+      ),
+      logger.traceId
     );
   }
+
   const aiScanLimit = await enforceAiScanLimit(ctx.workspaceId, 1);
   if (!aiScanLimit.ok) {
-    return NextResponse.json(
-      {
-        error: aiScanLimit.error,
-        currentPlan: aiScanLimit.plan,
-        maxAiScansPerMonth: aiScanLimit.max,
-        currentAiScansThisMonth: aiScanLimit.current,
-        recommendedPlan: aiScanLimit.recommendedPlan,
-      },
-      { status: 402 }
+    return attachTraceId(
+      NextResponse.json(
+        {
+          error: aiScanLimit.error,
+          currentPlan: aiScanLimit.plan,
+          maxAiScansPerMonth: aiScanLimit.max,
+          currentAiScansThisMonth: aiScanLimit.current,
+          recommendedPlan: aiScanLimit.recommendedPlan,
+        },
+        { status: 402 }
+      ),
+      logger.traceId
     );
   }
 
@@ -94,33 +109,57 @@ export async function POST(req: Request) {
       typeof rawClientBusinessId === "string" ? Number(rawClientBusinessId) : NaN;
 
     if (!file || typeof file === "string") {
-      return NextResponse.json({ error: "file is required" }, { status: 400 });
+      return attachTraceId(
+        NextResponse.json({ error: "file is required" }, { status: 400 }),
+        logger.traceId
+      );
     }
 
     if (!Number.isInteger(clientBusinessId)) {
-      return NextResponse.json({ error: "clientBusinessId is required" }, { status: 400 });
+      return attachTraceId(
+        NextResponse.json({ error: "clientBusinessId is required" }, { status: 400 }),
+        logger.traceId
+      );
+    }
+
+    const fileType = file.type?.trim() || "application/octet-stream";
+    if (!isSupportedMimeType(fileType)) {
+      return attachTraceId(
+        NextResponse.json(
+          {
+            error:
+              "Unsupported file type. Upload JPG, PNG, WEBP, HEIC, HEIF, or PDF receipts and invoices.",
+          },
+          { status: 400 }
+        ),
+        logger.traceId
+      );
+    }
+
+    if (fileType === "application/pdf" && file.size > MAX_BOOKKEEPING_PDF_BYTES) {
+      return attachTraceId(
+        NextResponse.json({ error: "PDF must be 15MB or smaller" }, { status: 400 }),
+        logger.traceId
+      );
+    }
+
+    if (fileType.startsWith("image/") && file.size > MAX_BOOKKEEPING_IMAGE_BYTES) {
+      return attachTraceId(
+        NextResponse.json({ error: "Image must be 8MB or smaller" }, { status: 400 }),
+        logger.traceId
+      );
     }
 
     const clientBusiness = await prisma.clientBusiness.findFirst({
       where: {
         id: clientBusinessId,
         workspaceId: ctx.workspaceId,
+        archivedAt: null,
       },
       select: {
         id: true,
         name: true,
-        categories: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        vendors: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        defaultCurrency: true,
       },
     });
 
@@ -128,100 +167,40 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Client business not found" }, { status: 404 });
     }
 
-    const fileType = file.type?.trim() || "application/octet-stream";
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const fileHash = crypto.createHash("sha256").update(buffer).digest("hex");
+
     const upload = await prisma.bookkeepingUpload.create({
       data: {
+        workspaceId: ctx.workspaceId,
         clientBusinessId,
         uploadedByUserId: ctx.userId,
         fileName: file.name || "bookkeeping-document",
         fileType,
         sourceType: "OTHER",
-        status: "PROCESSING",
+        documentType: "UNKNOWN",
+        status: "UPLOADED",
         uploadSizeBytes: file.size,
+        fileHash,
+        fileData: buffer,
       },
       select: { id: true },
     });
     uploadId = upload.id;
 
-    if (!isSupportedMimeType(fileType)) {
-      await prisma.bookkeepingUpload.update({
-        where: { id: upload.id },
-        data: {
-          status: "FAILED",
-          failureReason: "Unsupported file type. Upload a receipt or invoice image, or a text PDF.",
-          reviewNotes:
-            "This file type is not supported for bookkeeping extraction. Use JPG, PNG, WEBP, HEIC, or PDF.",
-          reviewedAt: new Date(),
-        },
-      });
-
-      return NextResponse.json(
-        { error: "Unsupported file type", uploadId: upload.id },
-        { status: 400 }
-      );
-    }
-
-    if (fileType === "application/pdf" && file.size > MAX_BOOKKEEPING_PDF_BYTES) {
-      await prisma.bookkeepingUpload.update({
-        where: { id: upload.id },
-        data: {
-          status: "FAILED",
-          failureReason: "PDF exceeds 15MB limit.",
-          reviewedAt: new Date(),
-        },
-      });
-
-      return NextResponse.json({ error: "PDF must be 15MB or smaller" }, { status: 400 });
-    }
-
-    if (fileType.startsWith("image/") && file.size > MAX_BOOKKEEPING_IMAGE_BYTES) {
-      await prisma.bookkeepingUpload.update({
-        where: { id: upload.id },
-        data: {
-          status: "FAILED",
-          failureReason: "Image exceeds 8MB limit.",
-          reviewedAt: new Date(),
-        },
-      });
-
-      return NextResponse.json({ error: "Image must be 8MB or smaller" }, { status: 400 });
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
     const openAiAvailable = hasOpenAiServerConfig();
+    const warnings: string[] = [];
+    let rawText: string | null = null;
 
     let extractionResult:
       | Awaited<ReturnType<typeof extractBookkeepingFromImage>>
       | Awaited<ReturnType<typeof extractBookkeepingFromText>>
       | null = null;
-    const warnings: string[] = [];
-    let rawText: string | null = null;
 
     if (fileType === "application/pdf") {
       rawText = await extractPdfText(buffer);
 
-      if (!rawText) {
-        await prisma.bookkeepingUpload.update({
-          where: { id: upload.id },
-          data: {
-            status: "FAILED",
-            failureReason:
-              "PDF text could not be extracted. Image-only PDFs are not supported in this MVP.",
-            reviewedAt: new Date(),
-          },
-        });
-
-        return NextResponse.json(
-          {
-            error:
-              "PDF text could not be extracted. Use a text PDF or upload the document as an image.",
-            uploadId: upload.id,
-          },
-          { status: 422 }
-        );
-      }
-
-      if (openAiAvailable) {
+      if (rawText && openAiAvailable) {
         try {
           extractionResult = await extractBookkeepingFromText({
             text: rawText,
@@ -232,19 +211,19 @@ export async function POST(req: Request) {
           warnings.push(
             error instanceof Error
               ? error.message
-              : "AI extraction failed; using local fallback for PDF text."
+              : "AI PDF extraction failed. Falling back to local heuristics."
           );
         }
       }
 
-      if (!extractionResult) {
+      if (!extractionResult && rawText) {
         extractionResult = {
           extraction: buildFallbackBookkeepingExtraction(rawText, {
             fileName: file.name,
             rawText,
             warnings: openAiAvailable
               ? warnings
-              : ["OPENAI_API_KEY is not configured. Using local PDF text heuristics."],
+              : ["OPENAI_API_KEY is not configured. Using local PDF heuristics."],
           }),
           metadata: {
             provider: openAiAvailable ? "heuristic-fallback" : "unavailable",
@@ -256,105 +235,172 @@ export async function POST(req: Request) {
           rawResponse: null,
         };
       }
-    } else {
-      if (!openAiAvailable) {
-        await prisma.bookkeepingUpload.update({
-          where: { id: upload.id },
-          data: {
-            status: "FAILED",
-            failureReason:
-              "OPENAI_API_KEY is not configured. Image extraction is unavailable without AI OCR.",
-            reviewedAt: new Date(),
-          },
-        });
 
-        return NextResponse.json(
-          {
-            error:
-              "OPENAI_API_KEY is not configured. Image extraction is unavailable in this environment.",
-            uploadId: upload.id,
+      if (!extractionResult) {
+        warnings.push(
+          "PDF text could not be extracted. The review draft was created from file metadata only."
+        );
+        extractionResult = {
+          extraction: buildImageMetadataFallbackExtraction({
+            fileName: file.name,
+            mimeType: fileType,
+            lastModified: "lastModified" in file ? file.lastModified : null,
+            warnings,
+          }),
+          metadata: {
+            provider: "unavailable",
+            model: null,
+            warnings,
+            fileName: file.name,
+            mimeType: fileType,
           },
-          { status: 503 }
+          rawResponse: null,
+        };
+      }
+    } else {
+      if (openAiAvailable) {
+        try {
+          const dataUrl = `data:${fileType};base64,${buffer.toString("base64")}`;
+          extractionResult = await extractBookkeepingFromImage({
+            dataUrl,
+            fileName: file.name,
+            mimeType: fileType,
+          });
+          rawText = extractionResult.extraction.rawText;
+        } catch (error) {
+          warnings.push(
+            error instanceof Error
+              ? error.message
+              : "AI image extraction failed. Falling back to file metadata."
+          );
+        }
+      } else {
+        warnings.push(
+          "OPENAI_API_KEY is not configured. Image uploads fall back to file metadata in this environment."
         );
       }
 
-      const dataUrl = `data:${fileType};base64,${buffer.toString("base64")}`;
-      extractionResult = await extractBookkeepingFromImage({
-        dataUrl,
-        fileName: file.name,
-        mimeType: fileType,
-      });
-      rawText = extractionResult.extraction.rawText;
+      if (!extractionResult) {
+        extractionResult = {
+          extraction: buildImageMetadataFallbackExtraction({
+            fileName: file.name,
+            mimeType: fileType,
+            lastModified: "lastModified" in file ? file.lastModified : null,
+            warnings,
+          }),
+          metadata: {
+            provider: openAiAvailable ? "heuristic-fallback" : "unavailable",
+            model: null,
+            warnings,
+            fileName: file.name,
+            mimeType: fileType,
+          },
+          rawResponse: null,
+        };
+      }
     }
 
     const extraction = extractionResult.extraction;
     const storedAmounts = buildStoredDraftAmounts(extraction);
-    const vendorId = matchExistingVendorId(clientBusiness.vendors, extraction.vendorName);
-    const categoryId = matchExistingCategoryId(
-      clientBusiness.categories,
-      extraction.suggestedCategory
-    );
-    const sourceType = deriveUploadSourceType(extraction.documentType);
-
-    const draftPayload = {
-      documentType: extraction.documentType,
+    const finalReference = extraction.documentNumber ?? file.name ?? null;
+    const historySuggestion = await buildWorkspaceHistorySuggestion({
+      clientBusinessId,
       vendorName: extraction.vendorName,
-      amount: extraction.amount,
-      taxAmount: extraction.taxAmount,
-      taxRate: extraction.taxRate,
-      currency: extraction.currency,
-      transactionDate: extraction.transactionDate,
       description: extraction.description,
-      suggestedCategory: extraction.suggestedCategory,
+      reference: finalReference,
+      suggestedCategoryName: extraction.suggestedCategory,
+      amountMinor: storedAmounts.totalAmountMinor ?? storedAmounts.amountMinor ?? null,
+      transactionDate: extraction.transactionDate,
       suggestedType: extraction.suggestedType,
+      documentType: extraction.documentType,
       vatTreatment: extraction.vatTreatment,
       whtTreatment: extraction.whtTreatment,
-      confidenceScore: extraction.confidenceScore,
-      rawText: extraction.rawText,
-      notes: extraction.notes,
+    });
+
+    const duplicateDetection = await detectDuplicateBookkeepingUpload({
+      workspaceId: ctx.workspaceId,
+      currentUploadId: upload.id,
+      clientBusinessId,
+      fileHash,
+      documentNumber: extraction.documentNumber,
+      vendorName: extraction.vendorName ?? historySuggestion.vendorName,
+      reference: finalReference,
+      totalAmountMinor: storedAmounts.totalAmountMinor ?? storedAmounts.amountMinor ?? null,
+      transactionDate: extraction.transactionDate,
+    });
+
+    const payload = buildReceiptScannerPayload({
+      extraction,
       metadata: extractionResult.metadata,
-    };
+      historySuggestion,
+      duplicateDetection,
+      rawResponse: extractionResult.rawResponse,
+    });
+
+    const reviewNotes = mergeNotes(
+      extraction.notes,
+      extractionResult.metadata.warnings,
+      historySuggestion.notes,
+      duplicateDetection.reason ? [duplicateDetection.reason] : undefined
+    );
+    const now = new Date();
 
     await prisma.$transaction(async (tx) => {
       await tx.bookkeepingUpload.update({
         where: { id: upload.id },
         data: {
-          sourceType,
-          status: "READY_FOR_REVIEW",
-          rawText: rawText,
-          aiPayload: JSON.stringify({
-            extraction,
-            metadata: extractionResult.metadata,
-            rawResponse: extractionResult.rawResponse,
-          }),
-          reviewNotes:
-            extraction.notes.length > 0 ? extraction.notes.join("\n") : warnings.join("\n") || null,
+          sourceType: deriveUploadSourceType(extraction.documentType),
+          documentType: extraction.documentType,
+          status: "EXTRACTED",
+          rawText,
+          extractedAt: now,
+          aiPayload: JSON.stringify(payload),
+          reviewNotes: reviewNotes.length > 0 ? reviewNotes.join("\n") : null,
           failureReason: null,
+          duplicateOfUploadId: duplicateDetection.duplicateOfUploadId,
+          duplicateConfidence: duplicateDetection.confidence,
+          duplicateReason: duplicateDetection.reason,
         },
       });
 
       await tx.bookkeepingDraft.create({
         data: {
           uploadId: upload.id,
-          vendorId,
-          categoryId,
+          vendorId: historySuggestion.vendorId,
+          categoryId: historySuggestion.categoryId,
           proposedDate: extraction.transactionDate ? new Date(extraction.transactionDate) : null,
           description: extraction.description,
-          reference: file.name || null,
-          vendorName: extraction.vendorName,
-          suggestedCategoryName: extraction.suggestedCategory,
+          reference: finalReference,
+          documentNumber: extraction.documentNumber,
+          vendorName: extraction.vendorName ?? historySuggestion.vendorName,
+          suggestedCategoryName:
+            historySuggestion.suggestedCategoryName ?? extraction.suggestedCategory,
+          paymentMethod: extraction.paymentMethod,
           direction: deriveLedgerDirection(extraction.suggestedType),
+          subtotalMinor: storedAmounts.subtotalMinor,
           amountMinor: storedAmounts.amountMinor,
+          totalAmountMinor: storedAmounts.totalAmountMinor ?? storedAmounts.amountMinor,
           taxAmountMinor: storedAmounts.taxAmountMinor,
           taxRate: extraction.taxRate,
-          currency: extraction.currency,
+          currency: extraction.currency || clientBusiness.defaultCurrency,
           vatAmountMinor: storedAmounts.vatAmountMinor,
           whtAmountMinor: storedAmounts.whtAmountMinor,
-          vatTreatment: extraction.vatTreatment,
-          whtTreatment: extraction.whtTreatment,
+          vatTreatment: historySuggestion.vatTreatment,
+          whtTreatment: historySuggestion.whtTreatment,
           confidence: extraction.confidenceScore,
+          deductibilityHint:
+            historySuggestion.deductibilityHint ?? extraction.deductibilityHint,
+          fieldConfidencePayload: JSON.stringify(extraction.fieldConfidences),
+          lineItemsPayload: JSON.stringify(extraction.lineItems),
           reviewStatus: "PENDING",
-          aiPayload: JSON.stringify(draftPayload),
+          aiPayload: JSON.stringify(payload),
+        },
+      });
+
+      await tx.bookkeepingUpload.update({
+        where: { id: upload.id },
+        data: {
+          status: "READY_FOR_REVIEW",
         },
       });
     });
@@ -371,19 +417,32 @@ export async function POST(req: Request) {
         provider: extractionResult.metadata.provider,
         documentType: extraction.documentType,
         suggestedType: extraction.suggestedType,
+        duplicateOfUploadId: duplicateDetection.duplicateOfUploadId,
       },
     });
 
-    const hydratedUpload = await getWorkspaceBookkeepingReviewUpload(
-      ctx.workspaceId,
-      upload.id
-    );
+    const hydratedUpload = await getWorkspaceBookkeepingReviewUpload(ctx.workspaceId, upload.id);
 
-    return NextResponse.json({
-      upload: hydratedUpload,
+    logger.info("upload processed", {
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
       uploadId: upload.id,
+      clientBusinessId,
+      fileType,
+      provider: extractionResult.metadata.provider,
+      aiEnabled: hasOpenAiServerConfig(),
+      duplicateOfUploadId: duplicateDetection.duplicateOfUploadId,
       status: hydratedUpload?.status ?? "READY_FOR_REVIEW",
     });
+
+    return attachTraceId(
+      NextResponse.json({
+        upload: hydratedUpload,
+        uploadId: upload.id,
+        status: hydratedUpload?.status ?? "READY_FOR_REVIEW",
+      }),
+      logger.traceId
+    );
   } catch (error) {
     if (uploadId) {
       await prisma.bookkeepingUpload.update({
@@ -397,17 +456,21 @@ export async function POST(req: Request) {
       });
     }
 
-    logRouteError("bookkeeping extract failed", error, {
+    logger.error("extraction failed", error, {
       workspaceId: ctx.workspaceId,
       userId: ctx.userId,
       uploadId,
     });
 
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Bookkeeping extraction failed",
-      },
-      { status: 500 }
+    return attachTraceId(
+      NextResponse.json(
+        buildTraceErrorPayload(
+          error instanceof Error ? error.message : "Bookkeeping extraction failed",
+          logger.traceId
+        ),
+        { status: 500 }
+      ),
+      logger.traceId
     );
   }
 }

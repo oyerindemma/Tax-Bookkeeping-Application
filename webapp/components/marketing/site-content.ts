@@ -1,33 +1,55 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
-  Bot,
   Building2,
   Calculator,
   CalendarDays,
   CheckCircle2,
   Clock3,
-  FileSpreadsheet,
+  FileSearch,
   Headphones,
+  Landmark,
   Layers3,
   Mail,
   MapPin,
   ReceiptText,
-  Repeat2,
   ShieldCheck,
   Sparkles,
   Users,
   WalletCards,
 } from "lucide-react";
 
-export const MARKETING_HEADLINE = "AI Accounting for Modern African Businesses";
+type IconCard = {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+};
+
+type FeatureBlock = {
+  icon: LucideIcon;
+  badge: string;
+  title: string;
+  description: string;
+  points: string[];
+};
+
+type AudienceBlock = {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  outcomes: string[];
+};
+
+export const MARKETING_NAME = "TaxBook AI";
+
+export const MARKETING_HEADLINE =
+  "AI accounting software for Nigerian businesses and accounting firms";
 
 export const MARKETING_SUBHEADLINE =
-  "Manage invoices, expenses, taxes, receipts, and reports in one intelligent workspace.";
+  "TaxBook AI helps businesses, finance teams, and accounting firms move from receipt capture to bookkeeping review, bank reconciliation, VAT and WHT summaries, and filing-ready tax workflows in one audit-friendly workspace.";
 
-export const MARKETING_NAME = "TaxBook";
-
-export const MARKETING_TAGLINE = "AI accounting for African business operators";
+export const MARKETING_TAGLINE =
+  "Nigeria-first AI bookkeeping, reconciliation, and filing workflows";
 
 export const MARKETING_NAV_ITEMS = [
   { href: "/", label: "Home" },
@@ -42,167 +64,267 @@ export const COMPANY_DETAILS = {
   location: "Lagos, Nigeria",
 };
 
-type IconCard = {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-};
-
 export const HERO_STATS = [
-  { label: "Launch-ready workflows", value: "7 core modules" },
-  { label: "Workspace roles", value: "Owner, Admin, Member, Viewer" },
-  { label: "Compliance visibility", value: "VAT, WHT, reports" },
+  { label: "Receipt to filing-ready output", value: "Upload, review, reconcile, close" },
+  { label: "Nigeria-ready tax layer", value: "VAT, WHT, exceptions, filing packs" },
+  { label: "Built for teams and firms", value: "Multi-business workspaces with roles" },
+  { label: "AI where it saves time", value: "Capture, matching, and grounded answers" },
 ];
 
-export const PROBLEM_POINTS: IconCard[] = [
-  {
-    icon: Layers3,
-    title: "Finance work is spread across too many tools",
-    description:
-      "Invoices, expenses, taxes, and reports often live in separate apps and spreadsheets that drift out of sync.",
-  },
+export const VALUE_STRIP: IconCard[] = [
   {
     icon: Calculator,
-    title: "Tax exposure shows up late",
+    title: "Nigeria-ready VAT and WHT workflows",
     description:
-      "Teams usually discover VAT or WHT gaps when reporting is already due and the cleanup work is expensive.",
+      "Keep tax treatment, summaries, exceptions, and filing prep close to the underlying records.",
   },
-  {
-    icon: Users,
-    title: "Multi-business collaboration gets risky",
-    description:
-      "Firms and finance teams need clean workspace boundaries, role controls, and reviewable history across every operator.",
-  },
-];
-
-export const SOLUTION_PILLARS: IconCard[] = [
   {
     icon: Sparkles,
-    title: "AI-assisted capture that stays reviewable",
+    title: "AI-assisted bookkeeping",
     description:
-      "Use AI receipt scanning and draft suggestions to speed up capture without losing human review over categories, vendors, and tax values.",
+      "Turn uploaded receipts and invoices into structured drafts that accountants can review before posting.",
+  },
+  {
+    icon: Landmark,
+    title: "Bank reconciliation",
+    description:
+      "Import statements, surface unmatched items, and move from transaction noise to a clean reconciliation queue.",
   },
   {
     icon: Building2,
-    title: "One workspace for daily accounting operations",
+    title: "Multi-business workspaces",
     description:
-      "Keep tax records, invoices, clients, reports, and team activity connected inside the active business context.",
+      "Operate one entity or many client businesses with cleaner boundaries, roles, and reporting context.",
   },
   {
     icon: ShieldCheck,
-    title: "Controls built for real finance teams",
+    title: "Audit-friendly review process",
     description:
-      "Workspace roles and audit logs make it easier to collaborate confidently as the business or client portfolio grows.",
+      "Keep human approval, notes, evidence, and traceable changes in the workflow instead of after the fact.",
   },
 ];
 
-export const FEATURE_HIGHLIGHTS: IconCard[] = [
+export const HOME_WORKFLOW_STEPS = [
+  {
+    step: "01",
+    title: "Upload",
+    description:
+      "Drop in receipts, invoices, or bank statements for the right workspace and client business.",
+  },
+  {
+    step: "02",
+    title: "Review",
+    description:
+      "Approve AI-extracted fields, fix tax treatment, and keep bookkeeping review under accountant control.",
+  },
+  {
+    step: "03",
+    title: "Reconcile",
+    description:
+      "Match transactions against invoices, ledger activity, and historical patterns before posting.",
+  },
+  {
+    step: "04",
+    title: "Close, report, and file",
+    description:
+      "Generate VAT and WHT summaries, review filing packs, and export filing-ready outputs from live workspace data.",
+  },
+];
+
+export const HOME_FEATURE_BLOCKS: FeatureBlock[] = [
   {
     icon: ReceiptText,
-    title: "Tax records and expense capture",
+    badge: "AI receipt scanner",
+    title: "Capture receipts and invoices without retyping the basics.",
     description:
-      "Track vendors, categories, recurring flags, tax values, and supporting notes from a single expense workflow.",
+      "Upload JPG, PNG, PDF, or document files into the bookkeeping queue and let TaxBook AI draft the first pass.",
+    points: [
+      "Vendor, date, total, VAT, WHT, and line-item extraction",
+      "Duplicate detection and confidence-aware review",
+      "Structured posting flow instead of raw OCR text",
+    ],
+  },
+  {
+    icon: FileSearch,
+    badge: "Bookkeeping review",
+    title: "Give accountants a faster review queue, not a black box.",
+    description:
+      "Edits, approvals, rejections, and evidence stay visible before anything reaches the ledger.",
+    points: [
+      "Editable extracted fields and category suggestions",
+      "Review-ready statuses and posting controls",
+      "Audit trail on every decision",
+    ],
+  },
+  {
+    icon: Landmark,
+    badge: "Bank reconciliation AI",
+    title: "Move from imported statements to matched transactions quickly.",
+    description:
+      "Surface likely invoice, ledger, and vendor matches with a queue built for finance operators.",
+    points: [
+      "CSV import with flexible column mapping",
+      "Suggested matches and reconciliation actions",
+      "Professional plan unlock for higher-control teams",
+    ],
+  },
+  {
+    icon: Calculator,
+    badge: "Tax engine",
+    title: "See VAT and WHT exposure while the work is still fixable.",
+    description:
+      "TaxBook AI computes summaries, exceptions, and review schedules from live accounting data.",
+    points: [
+      "VAT and WHT summaries by business and period",
+      "Exceptions for missing treatment, evidence, or duplicate sources",
+      "CIT support scaffolding for close prep",
+    ],
+  },
+  {
+    icon: CalendarDays,
+    badge: "Filing workflow",
+    title: "Prepare VAT and WHT filing packs without pretending unsupported auto-submission.",
+    description:
+      "Build filing drafts, review exceptions, export schedules, and log manual submission steps for TaxPro Max-style workflows.",
+    points: [
+      "Filing drafts, evidence, notes, and submission logs",
+      "Filing-ready summaries and JSON payload candidates",
+      "Manual submission workflow with audit-friendly checkpoints",
+    ],
+  },
+  {
+    icon: Building2,
+    badge: "Client business management",
+    title: "Keep businesses, clients, and workspace context cleanly separated.",
+    description:
+      "Ideal for firms and finance teams handling multiple entities without losing operational clarity.",
+    points: [
+      "Workspace-scoped access and business switching",
+      "Client businesses linked to invoices, recurring billing, banking, and tax records",
+      "Cleaner reporting context across portfolios",
+    ],
+  },
+  {
+    icon: Sparkles,
+    badge: "Assistant layer",
+    title: "Ask grounded finance questions without leaving workspace context.",
+    description:
+      "TaxBook AI turns live workspace data into accountant-friendly answers, quick actions, and review priorities instead of generic chatbot output.",
+    points: [
+      "Workspace-aware answers from invoices, banking, tax, and filing data",
+      "Quick actions into overdue invoices, reconciliation, and filing review",
+      "Graceful fallback mode when OpenAI is unavailable",
+    ],
+  },
+];
+
+export const WHO_IT_IS_FOR: AudienceBlock[] = [
+  {
+    icon: Users,
+    title: "Accounting firms",
+    description:
+      "Manage client portfolios, keep each business isolated, and give reviewers a cleaner path from raw documents to tax-ready outputs.",
+    outcomes: [
+      "Multi-business workspace structure",
+      "Audit-friendly review flows for client work",
+      "Professional plan unlocks banking and team workflows",
+    ],
+  },
+  {
+    icon: Building2,
+    title: "SMEs",
+    description:
+      "Replace spreadsheets and scattered tools with one operating layer for receipts, invoices, tax visibility, and reporting.",
+    outcomes: [
+      "Starter for manual bookkeeping and reporting",
+      "Growth for AI receipt scanning and automation",
+      "Clear upgrade path without migrating systems",
+    ],
   },
   {
     icon: WalletCards,
-    title: "Invoices, clients, and collections",
+    title: "Finance operators",
     description:
-      "Create invoices, manage clients, issue payment links, and keep receivables connected to the accounting record.",
-  },
-  {
-    icon: FileSpreadsheet,
-    title: "Reports built for tax visibility",
-    description:
-      "Generate operational summaries, export-ready VAT and WHT views, and finance packs that are easy to review.",
-  },
-  {
-    icon: Bot,
-    title: "AI receipt scanning and assistant workflows",
-    description:
-      "Scan receipts into drafts and ask grounded questions about invoices, cash flow, and tax trends inside each workspace.",
-  },
-  {
-    icon: Users,
-    title: "Workspace and team roles",
-    description:
-      "Switch between businesses, invite teammates, and keep permissions aligned to how the finance team actually works.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Audit trails by default",
-    description:
-      "Track operational actions across workspaces so approvals, edits, and reporting changes stay traceable.",
+      "Give controllers, ops leads, and finance managers cleaner daily workflows around capture, review, reconciliation, and close.",
+    outcomes: [
+      "Shared workspace with role-based control",
+      "Reconciliation queue and tax exceptions in one place",
+      "Assistant layer for live workspace questions",
+    ],
   },
 ];
 
 export const PREVIEW_CARDS = [
   {
-    eyebrow: "Overview",
-    title: "A live dashboard for revenue, expense, and tax pressure",
+    eyebrow: "AI capture",
+    title: "Receipt and invoice uploads land in a review queue accountants can trust.",
     description:
-      "Monitor cash collected, invoices at risk, and the latest filing picture without exporting data into a separate tracker.",
+      "Instead of sending OCR text into a spreadsheet, TaxBook AI drafts structured fields and flags duplicates or low-confidence values before posting.",
     accentClassName: "from-emerald-50 via-background to-amber-50",
     rows: [
-      { label: "Cash collected", value: "NGN 12.4m" },
-      { label: "Outstanding invoices", value: "NGN 1.08m" },
-      { label: "VAT payable", value: "NGN 842k" },
+      { label: "Documents ready for review", value: "18 items" },
+      { label: "Low-confidence fields", value: "3 flagged" },
+      { label: "Duplicate warnings", value: "2 matched" },
     ],
   },
   {
-    eyebrow: "Operations",
-    title: "Invoices, clients, and receipts stay connected",
+    eyebrow: "Reconciliation",
+    title: "Bank activity moves through a queue built for matching, review, and posting.",
     description:
-      "Work from the same workspace record when creating invoices, reviewing receipt drafts, or following up on unpaid balances.",
+      "Import statement lines, surface likely matches, and resolve unmatched transactions without leaving workspace context.",
     accentClassName: "from-sky-50 via-background to-background",
     rows: [
-      { label: "Active clients", value: "38" },
-      { label: "Receipt drafts awaiting review", value: "11" },
-      { label: "Recurring invoices scheduled", value: "6" },
+      { label: "Statement rows imported", value: "246 this month" },
+      { label: "Suggested matches", value: "31 queued" },
+      { label: "Still unmatched", value: "9 items" },
     ],
   },
   {
-    eyebrow: "Control",
-    title: "Roles, reports, and audit history in the same flow",
+    eyebrow: "Tax close",
+    title: "VAT, WHT, and filing readiness are visible before the reporting deadline arrives.",
     description:
-      "Move from transaction entry to filing export with workspace roles and audit coverage already in place.",
+      "Close the loop from day-to-day bookkeeping into tax summaries, evidence, and filing review packs for the selected business and period.",
     accentClassName: "from-amber-50 via-background to-emerald-50",
     rows: [
-      { label: "Workspace members", value: "5 active" },
-      { label: "Audit events this week", value: "127" },
-      { label: "Reports ready to export", value: "4" },
+      { label: "VAT payable", value: "NGN 1.53m" },
+      { label: "WHT exceptions", value: "3 items" },
+      { label: "Filing drafts ready", value: "2 prepared" },
     ],
   },
 ];
 
 export const FEATURE_PILLARS = [
   {
-    title: "Daily accounting operations",
-    description: "Run the recurring work that keeps finance teams in control day to day.",
+    title: "Capture and review",
+    description:
+      "Move from uploaded documents into a reviewable bookkeeping queue without sacrificing accountant oversight.",
     items: [
-      "Tax records with categories, vendors, recurring flags, and tax values",
-      "Client management linked directly to invoice and payment activity",
-      "Invoice creation, payment links, recurring billing, and status tracking",
-      "Bank imports and reconciliation support for cleaner reporting workflows",
+      "AI receipt scanner for receipts, invoices, and supporting documents",
+      "Bookkeeping review queue with approvals, rejections, notes, and evidence",
+      "Vendor, category, VAT, and WHT suggestions grounded in workspace history",
+      "Duplicate detection before records are posted",
     ],
   },
   {
-    title: "Reporting and tax readiness",
-    description: "Keep VAT and WHT preparation close to the underlying records.",
+    title: "Reconcile and operate",
+    description:
+      "Keep day-to-day finance work connected across invoices, banking, clients, and recurring activities.",
     items: [
-      "Reports that turn raw activity into clear income, expense, and tax summaries",
-      "Tax filing exports for VAT and WHT review packs",
-      "Printable and CSV-ready outputs for external review or internal controls",
-      "Workspace-scoped visibility so teams know exactly which business they are reporting on",
+      "Client business management and workspace switching",
+      "Recurring invoices and receivables follow-up",
+      "Bank statement import and reconciliation actions",
+      "Team collaboration for reviewers and operators",
     ],
   },
   {
-    title: "Automation and intelligence",
-    description: "Use AI where it reduces manual work without obscuring decisions.",
+    title: "Close and explain",
+    description:
+      "Turn live accounting data into reports, tax summaries, and finance answers that are easier to trust.",
     items: [
-      "AI receipt scanning that drafts structured fields from uploaded images",
-      "Text-to-record drafting for faster expense entry",
-      "A workspace-aware accounting assistant for operational questions",
-      "Suggested actions and grounded metrics to support finance follow-up",
+      "VAT and WHT summaries by business and filing period",
+      "Filing-ready schedules, evidence packs, and compliance exception tracking",
+      "Embedded assistant for overdue invoices, unmatched transactions, and tax questions",
+      "Audit-friendly activity history across the workspace",
     ],
   },
 ];
@@ -210,27 +332,27 @@ export const FEATURE_PILLARS = [
 export const FEATURE_WORKFLOWS: IconCard[] = [
   {
     icon: ReceiptText,
-    title: "From receipt to reviewed record",
+    title: "Upload source documents once",
     description:
-      "Capture a receipt, draft the details with AI, review the values, and save a structured expense without retyping everything by hand.",
+      "Bring in receipts, invoices, and bank statements directly into the correct business context instead of forwarding files around.",
   },
   {
-    icon: WalletCards,
-    title: "From invoice to confirmed cash",
+    icon: Layers3,
+    title: "Review before posting",
     description:
-      "Create invoices, track due dates, send payment links, and follow the balance through to collection inside the same workflow.",
+      "Correct fields, confirm tax treatment, and attach evidence while the supporting document is still in front of the reviewer.",
+  },
+  {
+    icon: Landmark,
+    title: "Reconcile with live records",
+    description:
+      "Use suggestions against invoices, ledger data, and historical vendors to clear bank activity faster.",
   },
   {
     icon: BarChart3,
-    title: "From bookkeeping to report pack",
+    title: "Close, report, and prepare filings",
     description:
-      "Turn daily operational entries into board-ready summaries and tax filing exports from the same workspace data.",
-  },
-  {
-    icon: Repeat2,
-    title: "From one business to many",
-    description:
-      "Move cleanly between workspaces, keep client portfolios separated, and give each team member the right level of access.",
+      "Generate VAT and WHT views, filing summaries, submission checklists, and finance answers from the same live workspace data.",
   },
 ];
 
@@ -239,53 +361,82 @@ export const GOVERNANCE_FEATURES: IconCard[] = [
     icon: ShieldCheck,
     title: "Role-based collaboration",
     description:
-      "Owners, admins, members, and viewers can work from the same system without blurring who should edit what.",
+      "Owners, admins, members, and viewers can work in the same workspace without blurring who should review, post, or export.",
   },
   {
     icon: CheckCircle2,
     title: "Audit history that supports review",
     description:
-      "Operational actions remain visible so it is easier to explain what changed, when, and by whom.",
+      "Keep changes, overrides, and approvals traceable so month-end questions do not depend on memory.",
   },
   {
     icon: Building2,
     title: "Workspace isolation that scales",
     description:
-      "Each business or client workspace stays distinct, which matters for firms and teams operating across multiple entities.",
+      "Each business or client workspace stays separate, which matters when firms and finance teams operate across multiple entities.",
   },
 ];
 
 export const PRICING_INCLUSIONS = [
-  "Core bookkeeping, VAT summary, and reporting from day one",
-  "Workspace-scoped accounting workflows for Nigerian businesses and firms",
-  "Upgrade paths for AI bookkeeping, banking reconciliation, and tax filing",
-  "Add-on-ready billing structure for extra businesses, scans, and filing automation",
+  "Starter is free for manual bookkeeping, VAT visibility, and core reporting.",
+  "Growth adds AI receipt scanning, bookkeeping automation, invoices, and recurring billing.",
+  "Professional unlocks bank reconciliation, audit workflows, team collaboration, and filing-ready tax workflows.",
+  "Enterprise stays sales-led for larger rollouts, integrations, and priority support.",
 ];
 
 export const PRICING_FAQ = [
   {
     question: "Can I start without speaking to sales?",
     answer:
-      "Yes. Starter is free to begin with, Growth and Professional remain self-serve where billing is configured, and Enterprise stays sales-led.",
+      "Yes. Starter is free to begin with, and Growth and Professional are designed for self-serve upgrades when billing is enabled in your workspace.",
   },
   {
-    question: "Which features are reserved for paid plans?",
+    question: "Which plan unlocks AI receipt scanning?",
     answer:
-      "Starter covers manual bookkeeping, VAT summaries, and basic reports. Growth unlocks AI receipt scanning and bookkeeping automation, while Professional adds banking reconciliation, team collaboration, audit logs, and the tax filing assistant.",
+      "Growth is the first paid plan for AI receipt scanning and bookkeeping automation. Professional includes it as well.",
   },
   {
-    question: "When should I upgrade beyond Starter?",
+    question: "Which plan unlocks bank reconciliation?",
     answer:
-      "Upgrade when you need more businesses under one workspace, more AI scan capacity, banking reconciliation, or multi-user accounting workflows.",
+      "Professional is the plan for bank reconciliation, audit-friendly review workflows, and team collaboration.",
+  },
+  {
+    question: "How does Enterprise work?",
+    answer:
+      "Enterprise is sales-led. Use it when you need unlimited scale, rollout support, integrations, or a more tailored operating model.",
+  },
+];
+
+export const PLAN_DECISION_GUIDE = [
+  {
+    icon: Sparkles,
+    title: "Move to Growth when AI capture becomes the bottleneck",
+    description:
+      "Growth is for teams that want receipt scanning, bookkeeping automation, and invoicing without jumping into heavier reconciliation controls yet.",
+    cta: "Best fit: Growth",
+  },
+  {
+    icon: Landmark,
+    title: "Move to Professional when finance operations need tighter control",
+    description:
+      "Professional adds bank reconciliation, audit logs, tax filing support, and multi-user workflows for firms and finance teams.",
+    cta: "Best fit: Professional",
+  },
+  {
+    icon: Users,
+    title: "Talk to sales for Enterprise rollouts",
+    description:
+      "Enterprise is designed for larger firms that need unlimited scale, integrations, and priority onboarding support.",
+    cta: "Best fit: Enterprise",
   },
 ];
 
 export const CONTACT_PATHS = [
   {
     icon: CalendarDays,
-    title: "Book a product walkthrough",
+    title: "Book a demo",
     description:
-      "See invoices, expenses, taxes, receipts, reports, team roles, and audit logs in a live launch-ready workflow.",
+      "Walk through receipt capture, bookkeeping review, reconciliation, VAT and WHT reporting, and workspace management with the team.",
     href: "mailto:hello@taxbook.africa?subject=Book%20a%20TaxBook%20Demo",
     cta: "Book Demo",
   },
@@ -293,24 +444,24 @@ export const CONTACT_PATHS = [
     icon: Mail,
     title: "Contact sales",
     description:
-      "Discuss rollout fit for one business, a finance team, or a multi-client accounting practice.",
+      "Discuss plan fit for a single business, a finance team, or a multi-client accounting practice.",
     href: "mailto:hello@taxbook.africa?subject=TaxBook%20Sales%20Inquiry",
     cta: "Email Sales",
   },
   {
     icon: Headphones,
-    title: "Get launch support",
+    title: "Get rollout support",
     description:
-      "Use this path for onboarding questions, pricing fit, or support around your operating model.",
+      "Use this path for onboarding questions, migration planning, or help structuring your operating model.",
     href: "mailto:hello@taxbook.africa?subject=TaxBook%20Launch%20Support",
     cta: "Contact Support",
   },
 ];
 
 export const CONTACT_EXPECTATIONS = [
-  "Typical response target: within one business day for launch and sales enquiries.",
-  "Primary launch focus: Nigerian businesses with workflows that scale across African operations.",
-  "Best-fit conversations: founders, finance leads, controllers, and accounting firms.",
+  "Typical response target: within one business day for product, sales, and rollout enquiries.",
+  "Primary launch focus: Nigerian businesses, finance teams, and accounting firms.",
+  "Best-fit conversations: founders, finance leads, controllers, and accounting practice operators.",
 ];
 
 export const CONTACT_CHECKLIST = [
@@ -318,18 +469,18 @@ export const CONTACT_CHECKLIST = [
     icon: Clock3,
     title: "Share your current workflow",
     description:
-      "Tell us how you currently handle invoices, expenses, reports, and tax preparation so the demo stays grounded.",
+      "Tell us how you handle receipts, invoices, banking, and tax reporting today so the conversation stays grounded.",
   },
   {
     icon: Users,
     title: "Outline who needs access",
     description:
-      "The right plan depends on how many operators, reviewers, and business entities need to collaborate.",
+      "Plan fit depends on how many operators, reviewers, businesses, or client entities need to collaborate.",
   },
   {
     icon: MapPin,
-    title: "Flag any regional or tax constraints",
+    title: "Flag any tax or reporting constraints",
     description:
-      "That helps us frame the right rollout approach, reporting expectations, and migration path from spreadsheets or other tools.",
+      "That helps us frame the right rollout approach for VAT, WHT, close processes, and migration expectations.",
   },
 ];

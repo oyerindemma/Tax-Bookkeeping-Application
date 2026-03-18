@@ -25,12 +25,14 @@ export function PublicFooter() {
               </div>
             </div>
             <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-              TaxBook combines invoices, expenses, taxes, receipts, reports, workspace roles,
-              and audit logs in one launch-ready finance workspace.
+              TaxBook AI combines AI receipt scanning, bookkeeping review, bank reconciliation,
+              VAT and WHT summaries, filing-ready tax workflows, multi-business workspaces, and
+              audit-friendly review in one Nigeria-first finance operating layer.
             </p>
             <div className="flex flex-wrap gap-2">
               <Badge variant="secondary">Workspace-scoped</Badge>
               <Badge variant="secondary">VAT/WHT ready</Badge>
+              <Badge variant="secondary">Filing-ready</Badge>
               <Badge variant="secondary">AI-assisted capture</Badge>
             </div>
           </div>
@@ -74,7 +76,7 @@ export function PublicFooter() {
                 <Link href="/pricing">View Pricing</Link>
               </Button>
               <Button asChild size="sm">
-                <Link href="/signup">Start Free Trial</Link>
+                <Link href="/signup">Start Free</Link>
               </Button>
             </div>
           </div>
@@ -83,8 +85,8 @@ export function PublicFooter() {
         <Separator className="my-6" />
 
         <div className="flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <p>Built for firms, finance teams, and growth-stage businesses across Africa.</p>
-          <p>© 2026 TaxBook. All rights reserved.</p>
+          <p>Built for Nigerian businesses, finance teams, and accounting firms that need credible books before filing deadlines.</p>
+          <p>© 2026 TaxBook AI. All rights reserved.</p>
         </div>
       </div>
     </footer>

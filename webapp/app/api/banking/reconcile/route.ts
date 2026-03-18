@@ -8,6 +8,7 @@ import {
   createManualLedgerMatch,
   getWorkspaceBankingDashboard,
   ignoreBankTransaction,
+  linkBankTransactionToInvoice,
   splitBankTransaction,
   updateBankTransactionClassification,
 } from "@/src/lib/banking";
@@ -208,6 +209,35 @@ export async function POST(req: Request) {
         metadata: {
           transactionId,
           mode: "manual",
+        },
+      });
+
+      return NextResponse.json({ transaction });
+    }
+
+    if (action === "link_invoice") {
+      const invoiceId = parseOptionalId(body.invoiceId);
+      if (!invoiceId) {
+        return NextResponse.json({ error: "invoiceId is required" }, { status: 400 });
+      }
+
+      const transaction = await linkBankTransactionToInvoice({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        payload: {
+          transactionId,
+          invoiceId,
+          clientBusinessId: parseOptionalId(body.clientBusinessId),
+        },
+      });
+
+      await logAudit({
+        workspaceId: ctx.workspaceId,
+        actorUserId: ctx.userId,
+        action: "BANK_TRANSACTION_LINKED_TO_INVOICE",
+        metadata: {
+          transactionId,
+          invoiceId,
         },
       });
 

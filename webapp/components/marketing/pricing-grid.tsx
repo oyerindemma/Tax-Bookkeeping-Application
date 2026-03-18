@@ -155,7 +155,8 @@ export function PricingGrid({
                   />
                   {!isConfigured ? (
                     <p className="text-xs text-muted-foreground">
-                      Checkout for this billing interval still needs wiring.
+                      Checkout is unavailable in this environment. Contact us if you need help
+                      activating this plan.
                     </p>
                   ) : null}
                 </div>

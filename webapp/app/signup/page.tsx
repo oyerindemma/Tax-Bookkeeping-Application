@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { redirectIfAuthenticated } from "@/src/lib/auth";
+import { buildMarketingMetadata } from "@/src/lib/marketing-metadata";
 import SignupForm from "./SignupForm";
 
-export const metadata: Metadata = {
-  title: "Start TaxBook AI",
-  description: "Create a TaxBook account and start on the Starter plan for free.",
-};
+export const metadata: Metadata = buildMarketingMetadata({
+  title: "Start Free",
+  description: "Create a TaxBook AI account and start on the Starter plan for free.",
+  path: "/signup",
+});
 
 export default async function Signup() {
   await redirectIfAuthenticated();

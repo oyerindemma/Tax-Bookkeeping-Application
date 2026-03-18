@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma, SubscriptionPlan } from "@prisma/client";
 import { cookies } from "next/headers";
+import { getOptionalSessionCookieDomain } from "@/src/lib/env";
 import { formatSubscriptionStatus } from "@/src/lib/billing";
 import { prisma } from "@/src/lib/prisma";
 import { SESSION_MAX_AGE_SECONDS } from "@/src/lib/session-constants";
@@ -9,12 +10,15 @@ import { SESSION_MAX_AGE_SECONDS } from "@/src/lib/session-constants";
 export const WORKSPACE_COOKIE_NAME = "tb_workspace";
 
 export function buildWorkspaceCookieOptions() {
+  const domain = getOptionalSessionCookieDomain();
+
   return {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax" as const,
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
+    ...(domain ? { domain } : {}),
   };
 }
 

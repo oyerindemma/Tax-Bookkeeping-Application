@@ -76,23 +76,23 @@ export default function SignupForm() {
             Start Free
           </Badge>
           <h1 className="text-5xl font-semibold tracking-tight text-balance">
-            Create your TaxBook workspace.
+            Create your TaxBook AI workspace.
           </h1>
           <p className="max-w-2xl text-lg leading-8 text-muted-foreground">
-            Start managing invoices, expenses, taxes, receipts, and reports in one intelligent
-            workspace.
+            Start with manual bookkeeping, invoices, VAT visibility, and reports, then upgrade when
+            you need AI capture or reconciliation workflows.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <Card className="border-border/60 bg-white/80 shadow-sm">
               <CardHeader className="pb-3">
                 <CardDescription>Included from day one</CardDescription>
-                <CardTitle className="text-lg">Invoices, reports, AI receipt scans</CardTitle>
+                <CardTitle className="text-lg">Bookkeeping, invoices, VAT and WHT visibility</CardTitle>
               </CardHeader>
             </Card>
             <Card className="border-border/60 bg-white/80 shadow-sm">
               <CardHeader className="pb-3">
-                <CardDescription>Built for collaboration</CardDescription>
-                <CardTitle className="text-lg">Workspace roles and audit logs</CardTitle>
+                <CardDescription>Upgrade when you are ready</CardDescription>
+                <CardTitle className="text-lg">AI capture, reconciliation, and team workflows</CardTitle>
               </CardHeader>
             </Card>
           </div>
@@ -102,7 +102,7 @@ export default function SignupForm() {
           <CardHeader>
             <CardTitle>Create account</CardTitle>
             <CardDescription>
-              Set up your account and continue into your TaxBook workspace.
+              Set up your account and continue into your TaxBook AI workspace.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">

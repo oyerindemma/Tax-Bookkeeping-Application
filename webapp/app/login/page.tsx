@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { redirectIfAuthenticated } from "@/src/lib/auth";
+import { buildMarketingMetadata } from "@/src/lib/marketing-metadata";
 import LoginForm from "./LoginForm";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildMarketingMetadata({
   title: "Login",
-  description: "Log in to your TaxBook workspace.",
-};
+  description: "Log in to your TaxBook AI workspace for bookkeeping, reconciliation, tax reporting, and team workflows.",
+  path: "/login",
+});
 
 export default async function LoginPage() {
   await redirectIfAuthenticated();

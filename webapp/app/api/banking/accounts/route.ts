@@ -58,6 +58,7 @@ export async function GET() {
       accounts: accounts.map((account) => ({
         id: account.id,
         name: account.name,
+        accountName: account.name,
         bankName: account.bankName,
         accountNumber: account.accountNumber,
         currency: account.currency,
@@ -101,22 +102,31 @@ export async function POST(req: Request) {
 
   try {
     const body = (await req.json()) as Record<string, unknown>;
-    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const accountName =
+      typeof body.accountName === "string"
+        ? body.accountName.trim()
+        : typeof body.name === "string"
+          ? body.name.trim()
+          : "";
     const bankName = typeof body.bankName === "string" ? body.bankName.trim() : "";
     const accountNumber =
       typeof body.accountNumber === "string" ? body.accountNumber.trim() : "";
+    const clientBusinessId = parseOptionalId(body.clientBusinessId);
 
-    if (!name || !bankName || !accountNumber) {
+    if (!accountName || !bankName || !accountNumber || !clientBusinessId) {
       return NextResponse.json(
-        { error: "name, bankName, and accountNumber are required" },
+        {
+          error:
+            "accountName, bankName, accountNumber, and clientBusinessId are required",
+        },
         { status: 400 }
       );
     }
 
     const account = await createWorkspaceBankAccount({
       workspaceId: ctx.workspaceId,
-      clientBusinessId: parseOptionalId(body.clientBusinessId),
-      name,
+      clientBusinessId,
+      accountName,
       bankName,
       accountNumber,
       currency: typeof body.currency === "string" ? body.currency : null,
@@ -125,19 +135,20 @@ export async function POST(req: Request) {
     await logAudit({
       workspaceId: ctx.workspaceId,
       actorUserId: ctx.userId,
-      action: "BANK_ACCOUNT_CREATED",
-      metadata: {
-        accountId: account.id,
-        clientBusinessId: account.clientBusinessId ?? null,
-        name: account.name,
-      },
-    });
+        action: "BANK_ACCOUNT_CREATED",
+        metadata: {
+          accountId: account.id,
+          clientBusinessId: account.clientBusinessId ?? null,
+          name: account.name,
+        },
+      });
 
     return NextResponse.json(
       {
         account: {
           id: account.id,
           name: account.name,
+          accountName: account.name,
           bankName: account.bankName,
           accountNumber: account.accountNumber,
           currency: account.currency,
