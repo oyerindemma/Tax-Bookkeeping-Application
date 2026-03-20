@@ -2,8 +2,25 @@ import "server-only";
 
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
+import type {
+  PaystackSubscriptionPayload,
+  PaystackTransactionVerificationData,
+} from "@/src/lib/paystack";
+import {
+  attachTraceId,
+  buildTraceErrorPayload,
+  createRouteLogger,
+  hashForLogs,
+} from "@/src/lib/observability";
+import { verifyPaystackSignature } from "@/src/lib/paystack";
+import {
+  markWorkspaceSubscriptionStatusFromPaystackEvent,
+  parseBillingMetadata,
+  syncWorkspaceSubscriptionFromPaystackSubscription,
+  syncWorkspaceSubscriptionFromPaystackTransaction,
+} from "@/src/lib/paystack-billing";
 import { prisma } from "@/src/lib/prisma";
-import { parseBillingMetadata } from "@/src/lib/paystack-billing";
 
 const WEBHOOK_PROCESSING_STALE_MS = 5 * 60 * 1000;
 
@@ -48,7 +65,61 @@ function buildErrorMessage(error: unknown) {
   return typeof error === "string" ? error : "Unknown billing webhook error";
 }
 
-export async function beginPaystackWebhookEvent(input: {
+type PaystackWebhookEvent = {
+  event?: unknown;
+  data?: unknown;
+};
+
+type ParsedPaystackWebhookPayload =
+  | {
+      ok: true;
+      eventType: string;
+      data: unknown;
+    }
+  | {
+      ok: false;
+      reason: "invalid_json" | "missing_event_type";
+    };
+
+function parsePaystackWebhookPayload(rawBody: string): ParsedPaystackWebhookPayload {
+  let event: PaystackWebhookEvent;
+
+  try {
+    event = JSON.parse(rawBody) as PaystackWebhookEvent;
+  } catch {
+    return {
+      ok: false,
+      reason: "invalid_json",
+    };
+  }
+
+  const eventType = parseString(event.event)?.toLowerCase();
+  if (!eventType) {
+    return {
+      ok: false,
+      reason: "missing_event_type",
+    };
+  }
+
+  return {
+    ok: true,
+    eventType,
+    data: event.data,
+  };
+}
+
+function requireResolvedWorkspaceSubscription<T extends { workspaceId: number } | null>(
+  value: T,
+  eventType: string
+): Exclude<T, null> {
+  if (!value) {
+    throw new Error(`Unable to resolve workspace subscription for ${eventType}`);
+  }
+
+  return value as Exclude<T, null>;
+}
+
+async function beginPaystackWebhookEvent(input: {
   eventType: string;
   rawBody: string;
   data: unknown;
@@ -143,7 +214,7 @@ export async function beginPaystackWebhookEvent(input: {
   }
 }
 
-export async function markBillingWebhookEventProcessed(
+async function markBillingWebhookEventProcessed(
   eventId: number,
   workspaceId?: number | null
 ) {
@@ -158,7 +229,7 @@ export async function markBillingWebhookEventProcessed(
   });
 }
 
-export async function markBillingWebhookEventFailed(
+async function markBillingWebhookEventFailed(
   eventId: number,
   error: unknown,
   workspaceId?: number | null
@@ -172,20 +243,230 @@ export async function markBillingWebhookEventFailed(
     },
   });
 }
-export async function handlePaystackEvent(event: any) {
-  const eventType = event.event;
-  const data = event.data;
 
-  const rawBody = JSON.stringify(event);
+export async function handlePaystackWebhookRequest(
+  req: Request,
+  routeName = "/api/paystack/webhook"
+): Promise<Response> {
+  const logger = createRouteLogger(routeName, req);
+  const signature = req.headers.get("x-paystack-signature");
+  const rawBody = await req.text();
+  const payloadHash = hashForLogs(rawBody);
+
+  if (!signature?.trim()) {
+    logger.warn("signature missing", {
+      payloadHash,
+      bodyLength: rawBody.length,
+    });
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Missing signature", logger.traceId), {
+        status: 401,
+      }),
+      logger.traceId
+    );
+  }
+
+  if (!verifyPaystackSignature(rawBody, signature)) {
+    logger.warn("signature verification failed", {
+      payloadHash,
+      bodyLength: rawBody.length,
+    });
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Invalid signature", logger.traceId), {
+        status: 401,
+      }),
+      logger.traceId
+    );
+  }
+
+  const parsedPayload = parsePaystackWebhookPayload(rawBody);
+  if (!parsedPayload.ok) {
+    logger.warn("invalid webhook payload", {
+      payloadHash,
+      bodyLength: rawBody.length,
+      reason: parsedPayload.reason,
+    });
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Invalid payload", logger.traceId), {
+        status: 400,
+      }),
+      logger.traceId
+    );
+  }
+
+  const identifiers = extractEventIdentifiers(parsedPayload.data);
+
+  logger.info("webhook received", {
+    eventType: parsedPayload.eventType,
+    payloadHash,
+    bodyLength: rawBody.length,
+    workspaceId: identifiers.workspaceId,
+    reference: identifiers.reference,
+    subscriptionCode: identifiers.subscriptionCode,
+    customerCode: identifiers.customerCode,
+  });
+
+  let webhookEvent: Awaited<ReturnType<typeof beginPaystackWebhookEvent>>;
 
   try {
-    await beginPaystackWebhookEvent({
-      eventType,
+    webhookEvent = await beginPaystackWebhookEvent({
+      eventType: parsedPayload.eventType,
       rawBody,
-      data,
+      data: parsedPayload.data,
     });
   } catch (error) {
-    console.error("Webhook handling failed:", error);
-    throw error;
+    logger.error("failed to persist webhook delivery", error, {
+      eventType: parsedPayload.eventType,
+      payloadHash,
+      workspaceId: identifiers.workspaceId,
+      reference: identifiers.reference,
+      subscriptionCode: identifiers.subscriptionCode,
+      customerCode: identifiers.customerCode,
+    });
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Webhook handler failed", logger.traceId), {
+        status: 500,
+      }),
+      logger.traceId
+    );
   }
+
+  if (webhookEvent.shouldSkip) {
+    logger.info("duplicate delivery skipped", {
+      eventType: parsedPayload.eventType,
+      webhookEventId: webhookEvent.event.id,
+      reason: webhookEvent.reason,
+      workspaceId: webhookEvent.event.workspaceId,
+      reference: webhookEvent.event.reference,
+      subscriptionCode: webhookEvent.event.subscriptionCode,
+      customerCode: webhookEvent.event.customerCode,
+    });
+    return attachTraceId(
+      NextResponse.json({
+        received: true,
+        duplicate: true,
+        eventType: parsedPayload.eventType,
+        reason: webhookEvent.reason,
+      }),
+      logger.traceId
+    );
+  }
+
+  let resolvedWorkspaceId = webhookEvent.event.workspaceId ?? identifiers.workspaceId ?? null;
+  let outcome = "ignored";
+
+  try {
+    switch (parsedPayload.eventType) {
+      case "charge.success": {
+        const transaction = parsedPayload.data as PaystackTransactionVerificationData;
+        const synced = requireResolvedWorkspaceSubscription(
+          await syncWorkspaceSubscriptionFromPaystackTransaction(
+            transaction,
+            parseBillingMetadata(transaction.metadata).plan ?? null
+          ),
+          parsedPayload.eventType
+        );
+        resolvedWorkspaceId = synced.workspaceId;
+        outcome = "subscription_synced";
+        break;
+      }
+      case "subscription.create":
+      case "subscription.enable":
+      case "subscription.not_renew":
+      case "subscription.disable": {
+        const statusHintByEventType = {
+          "subscription.create": "active",
+          "subscription.enable": "active",
+          "subscription.not_renew": "non_renewing",
+          "subscription.disable": "disabled",
+        } as const;
+
+        const synced = requireResolvedWorkspaceSubscription(
+          await syncWorkspaceSubscriptionFromPaystackSubscription(
+            parsedPayload.data as PaystackSubscriptionPayload,
+            {
+              statusHint: statusHintByEventType[parsedPayload.eventType],
+            }
+          ),
+          parsedPayload.eventType
+        );
+        resolvedWorkspaceId = synced.workspaceId;
+        outcome = "subscription_synced";
+        break;
+      }
+      case "invoice.payment_failed":
+      case "charge.failed": {
+        const synced = requireResolvedWorkspaceSubscription(
+          await markWorkspaceSubscriptionStatusFromPaystackEvent(
+            parsedPayload.data,
+            "payment_failed"
+          ),
+          parsedPayload.eventType
+        );
+        resolvedWorkspaceId = synced.workspaceId;
+        outcome = "subscription_status_updated";
+        break;
+      }
+      default:
+        logger.info("event type ignored", {
+          eventType: parsedPayload.eventType,
+          webhookEventId: webhookEvent.event.id,
+          workspaceId: resolvedWorkspaceId,
+        });
+        break;
+    }
+
+    await markBillingWebhookEventProcessed(
+      webhookEvent.event.id,
+      resolvedWorkspaceId ?? undefined
+    );
+    logger.info("webhook processed", {
+      eventType: parsedPayload.eventType,
+      webhookEventId: webhookEvent.event.id,
+      workspaceId: resolvedWorkspaceId,
+      duplicate: webhookEvent.duplicate,
+      outcome,
+      reference: identifiers.reference,
+      subscriptionCode: identifiers.subscriptionCode,
+      customerCode: identifiers.customerCode,
+    });
+  } catch (error) {
+    try {
+      await markBillingWebhookEventFailed(
+        webhookEvent.event.id,
+        error,
+        resolvedWorkspaceId ?? undefined
+      );
+    } catch (persistError) {
+      logger.error("failed to persist webhook failure state", persistError, {
+        eventType: parsedPayload.eventType,
+        webhookEventId: webhookEvent.event.id,
+        workspaceId: resolvedWorkspaceId,
+      });
+    }
+
+    logger.error("event handling failed", error, {
+      eventType: parsedPayload.eventType,
+      webhookEventId: webhookEvent.event.id,
+      workspaceId: resolvedWorkspaceId,
+      reference: identifiers.reference,
+      subscriptionCode: identifiers.subscriptionCode,
+      customerCode: identifiers.customerCode,
+    });
+    return attachTraceId(
+      NextResponse.json(buildTraceErrorPayload("Webhook handler failed", logger.traceId), {
+        status: 500,
+      }),
+      logger.traceId
+    );
+  }
+
+  return attachTraceId(
+    NextResponse.json({
+      received: true,
+      eventType: parsedPayload.eventType,
+      outcome,
+    }),
+    logger.traceId
+  );
 }
