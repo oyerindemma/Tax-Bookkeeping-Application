@@ -201,15 +201,17 @@ export async function POST(req: Request) {
     }
 
     logger.error("signup failed", error);
-    return attachTraceId(
-      NextResponse.json(
-        buildTraceErrorPayload(
-          "We could not create your account right now. Please try again.",
-          logger.traceId
-        ),
-        { status: 500 }
-      ),
+console.error("SIGNUP ERROR RAW:", error);
+
+return attachTraceId(
+  NextResponse.json(
+    buildTraceErrorPayload(
+      "We could not create your account right now. Please try again.",
       logger.traceId
-    );
+    ),
+    { status: 500 }
+  ),
+  logger.traceId
+);
   }
 }
