@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 
@@ -53,52 +52,10 @@ export async function POST(req: Request) {
     );
   } catch (error) {
     console.error("SIGNUP ERROR:", error);
-
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === "P2002") {
-        return NextResponse.json(
-          { error: "An account already exists for that email." },
-          { status: 409 }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          error: "Signup failed",
-          ...(process.env.NODE_ENV !== "production"
-            ? {
-                prisma: {
-                  code: error.code,
-                  message: error.message,
-                  meta: error.meta,
-                },
-              }
-            : {}),
-        },
-        { status: 500 }
-      );
-    }
-
-    if (error instanceof Prisma.PrismaClientValidationError) {
-      return NextResponse.json(
-        {
-          error: "Signup failed",
-          ...(process.env.NODE_ENV !== "production"
-            ? { details: error.message }
-            : {}),
-        },
-        { status: 500 }
-      );
-    }
-
     return NextResponse.json(
       {
         error: "Signup failed",
-        ...(process.env.NODE_ENV !== "production"
-          ? {
-              details: error instanceof Error ? error.message : String(error),
-            }
-          : {}),
+        details: error instanceof Error ? error.message : String(error),
       },
       { status: 500 }
     );
