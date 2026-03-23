@@ -41,6 +41,7 @@ This runbook is the source of truth for deploying TaxBook AI on Vercel with Neon
 
 ## Vercel Setup
 
+0. Set the Vercel project Root Directory to `webapp`. This repository is not a root-level Next.js app, so deploying the repository root can produce a successful "Ready" deployment that still returns `404` at `/`.
 1. Set env vars separately for `Development`, `Preview`, and `Production`.
 2. After changing a Vercel env var, trigger a new deployment. Running instances do not retroactively pick up new env values.
 3. Use `APP_URL` that matches the exact public domain for production, for example `https://taxbook.ai`.

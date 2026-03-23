@@ -29,6 +29,8 @@ npm run prisma:migrate:deploy
 
 Production deployment guidance lives in [docs/production-deployment.md](./docs/production-deployment.md).
 
+This repository's Next.js App Router app lives in `webapp/`. In Vercel, set the project Root Directory to `webapp` so the deployed project includes `app/page.tsx` and the homepage resolves at `/`.
+
 That runbook covers:
 
 - Vercel environment variables by environment

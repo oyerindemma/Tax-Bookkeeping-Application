@@ -1,3 +1,4 @@
+import "server-only";
 import { PrismaClient } from "@prisma/client";
 import { validateDatabaseEnvironment } from "@/src/lib/env";
 
